@@ -147,8 +147,13 @@ function createFakeHost(options = {}) {
       { tool: 'read', at: daysBefore(2), sessionId: 'session-2' },
       { tool: 'grep', at: daysBefore(5), sessionId: 'session-1' },
     ]
+  const dispatchCalls = []
+  const dispatchEvents = options.dispatchEvents ?? []
+  const dispatchSupport = options.dispatchSupport ?? { available: true }
+  const dispatchSessionId = options.dispatchSessionId ?? 'background-session'
   const host = {
     counts,
+    dispatchCalls,
     sessionEventSince,
     get warnings() {
       return warnings.slice()
@@ -168,6 +173,18 @@ function createFakeHost(options = {}) {
     async listSkills() {
       counts.listSkills += 1
       return cloneJson(skills)
+    },
+    dispatchSupport: () => cloneJson(dispatchSupport),
+    async createDispatchSession() {
+      return dispatchSessionId
+    },
+    async promptDispatchSession(request) {
+      dispatchCalls.push(cloneJson(request))
+      if (typeof options.promptDispatchError === 'string') throw new Error(options.promptDispatchError)
+    },
+    async readDispatchEvents() {
+      if (typeof options.dispatchReadError === 'string') throw new Error(options.dispatchReadError)
+      return cloneJson(dispatchEvents)
     },
     sessionEvents(sinceISO) {
       counts.sessionEvents += 1
@@ -222,9 +239,9 @@ function assertFailure(response, status, pattern) {
 // Route table
 // ---------------------------------------------------------------------------
 
-test('路由表：10 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATHS 一一对应', () => {
+test('路由表：11 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATHS 一一对应', () => {
   const routes = createRoutes({ deps: makeDeps() })
-  assert.equal(routes.length, 10)
+  assert.equal(routes.length, 11)
   for (const route of routes) {
     assert.ok(route.method === 'GET' || route.method === 'POST', 'method 只能是 GET/POST')
     assert.equal(typeof route.path, 'string')
@@ -233,7 +250,7 @@ test('路由表：10 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATH
   }
   assert.deepEqual(routes.map((route) => route.path).sort(), Object.values(ROUTE_PATHS).sort())
   assert.equal(routeOf(routes, ROUTE_PATHS.state).method, 'GET')
-  for (const key of ['scan', 'scenarios', 'map', 'pack', 'gaps', 'preview', 'apply', 'rollback', 'draft']) {
+  for (const key of ['scan', 'scenarios', 'map', 'pack', 'gaps', 'preview', 'apply', 'rollback', 'draft', 'dispatch']) {
     assert.equal(routeOf(routes, ROUTE_PATHS[key]).method, 'POST', key + ' 必须是 POST')
   }
 })
@@ -251,7 +268,7 @@ test('GET state：返回 scan/map/proposals/selections 与 warnings；缺失文�
   })
   const response = await call(makeDeps({ store }), ROUTE_PATHS.state, {})
   assert.equal(response.status, 200)
-  assert.deepEqual(Object.keys(response.json).sort(), ['map', 'proposals', 'scan', 'selections', 'warnings'])
+  assert.deepEqual(Object.keys(response.json).sort(), ['dispatch', 'map', 'proposals', 'scan', 'selections', 'warnings'])
   assert.deepEqual(response.json.scan, sampleScan())
   assert.deepEqual(response.json.map, sampleMap())
   assert.deepEqual(response.json.proposals, sampleProposals())
@@ -290,7 +307,7 @@ test('GET state：store.read 自己抛错也不冒泡，每个文档一条 warni
   assert.equal(response.json.map, null)
   assert.equal(response.json.proposals, null)
   assert.equal(response.json.selections, null)
-  assert.equal(response.json.warnings.length, 4)
+  assert.equal(response.json.warnings.length, 5)
   for (const message of response.json.warnings) assert.match(message, /disk boom/)
 })
 
@@ -1008,4 +1025,78 @@ test('TOOL_SPECS 回归：stow_preview.ids 省略 required（可选）、stow_ma
 test('TOOL_SPECS 仍能经 registerTools 注册出 9 个工具（DSL 修复不改变工具面）', () => {
   const tools = registerTools({ deps: makeDeps() })
   assert.deepEqual(tools.map((tool) => tool.name).sort(), EXPECTED_TOOL_NAMES.slice().sort())
+})
+
+// ---------------------------------------------------------------------------
+// POST dispatch
+// ---------------------------------------------------------------------------
+
+test('POST dispatch：kind 缺失或场景为空 → 400，且不建会话、不投递', async () => {
+  const store = createFakeStore({ scan: sampleScan(), selections: { selected: [], custom: '' } })
+  const deps = makeDeps({ store })
+  assertFailure(await call(deps, ROUTE_PATHS.dispatch, {}), 400, /kind/)
+  assertFailure(await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' }), 400, /场景/)
+  assert.equal(deps.host.dispatchCalls.length, 0)
+})
+
+test('POST dispatch：宿主不支持时 → 503 + 可读原因', async () => {
+  const store = createFakeStore({ scan: sampleScan(), selections: { selected: ['dev'], custom: '' } })
+  const deps = makeDeps({ store, hostOptions: { dispatchSupport: { available: false, reason: '宿主缺少 sessionController' } } })
+  assertFailure(await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' }), 503, /sessionController/)
+})
+
+test('POST dispatch：成功创建专用会话并投递 stow_map_save prompt，写入 running 记录', async () => {
+  const store = createFakeStore({ scan: sampleScan(), selections: { selected: ['dev'], custom: '' } })
+  const deps = makeDeps({ store })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' })
+  assert.equal(response.status, 200)
+  assert.equal(response.json.ok, true)
+  assert.equal(response.json.dispatch.state, 'running')
+  assert.equal(response.json.dispatch.sessionId, 'background-session')
+  assert.equal(deps.host.dispatchCalls.length, 1)
+  assert.equal(deps.host.dispatchCalls[0].sessionId, 'background-session')
+  assert.match(deps.host.dispatchCalls[0].text, /stow_map_save/)
+  assert.match(deps.host.dispatchCalls[0].text, /研发/)
+  const written = store.writes.find((write) => write.name === 'dispatch')
+  assert.equal(written.value.state, 'running')
+  assert.equal(written.value.sessionId, 'background-session')
+})
+
+test('POST dispatch：已有 running 记录 → 409，且不重复投递', async () => {
+  const store = createFakeStore({
+    scan: sampleScan(),
+    selections: { selected: ['dev'], custom: '' },
+    dispatch: { kind: 'map', sessionId: 's-prev', requestId: 'r-prev', startedAt: NOW_ISO, state: 'running' },
+  })
+  const deps = makeDeps({ store })
+  assertFailure(await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' }), 409, /执行中/)
+  assert.equal(deps.host.dispatchCalls.length, 0)
+})
+
+test('POST dispatch：投递失败 → 502 且记录 failed 供重试', async () => {
+  const store = createFakeStore({ scan: sampleScan(), selections: { selected: ['dev'], custom: '' } })
+  const deps = makeDeps({ store, hostOptions: { promptDispatchError: 'agent busy' } })
+  assertFailure(await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' }), 502, /agent busy/)
+  const written = store.writes.filter((write) => write.name === 'dispatch')
+  assert.equal(written.length, 1)
+  assert.equal(written[0].value.state, 'failed')
+  assert.match(written[0].value.error, /agent busy/)
+})
+
+test('GET state：dispatch 状态由会话事件推导（running → done），读会话失败降级 unknown 且仍 200', async () => {
+  const record = { kind: 'map', sessionId: 's1', requestId: 'r1', startedAt: NOW_ISO, state: 'running' }
+  const runningStore = createFakeStore({ dispatch: record })
+  const running = await call(makeDeps({ store: runningStore }), ROUTE_PATHS.state, {})
+  assert.equal(running.status, 200)
+  assert.equal(running.json.dispatch.state, 'running')
+  const doneEvents = [
+    { seq: 1, time: NOW.getTime() + 1000, type: 'user/message', data: { source: { rpcId: 'r1' } } },
+    { seq: 2, time: NOW.getTime() + 2000, type: 'turn/end', data: {} },
+  ]
+  const done = await call(makeDeps({ store: createFakeStore({ dispatch: record }), hostOptions: { dispatchEvents: doneEvents } }), ROUTE_PATHS.state, {})
+  assert.equal(done.json.dispatch.state, 'done')
+  const unreadable = await call(makeDeps({ store: createFakeStore({ dispatch: record }), hostOptions: { dispatchReadError: 'boom' } }), ROUTE_PATHS.state, {})
+  assert.equal(unreadable.status, 200)
+  assert.equal(unreadable.json.dispatch.state, 'unknown')
+  assert.match(unreadable.json.dispatch.error, /boom/)
 })
