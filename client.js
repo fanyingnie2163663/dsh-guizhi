@@ -1,10 +1,19 @@
 /**
- * Guizhi · browser half: the three-screen panel (Task 7).
+ * Guizhi · browser half: the three-screen panel (清爽 / 场景 / 地图).
  *
- * The DSH Web shell loads client plugins as plain scripts through
- * window.__ModuleLoader__.load; the factory receives require and must return a
- * cordis plugin descriptor ({ name, inject, apply }). There is NO build step in
- * this package: this file is the artifact, plain ES2020 + React.createElement.
+ * Loaded as a plain script through window.__ModuleLoader__.load; the factory
+ * receives require and returns a cordis descriptor ({ name, inject, apply }).
+ * No build step, no JSX: plain ES2020 + React.createElement only.
+ *
+ * Visual layer (polish pass): brand header with a live system-status dot and
+ * the rescan action; segmented tabs with aria-selected and a sliding
+ * indicator; four stat cards with inline SVG icons; a sticky-header tool table
+ * with owner chips and a 30-day usage mini bar; scenario chips with inline
+ * icons; a timeline-style capability map with evidence grids; a sticky map
+ * action bar; and one unified 「操作结果」result card. Every colour/size comes
+ * from DSH theme variables with a safe fallback, so the panel follows the
+ * shell's light/dark theme. docs/ui-preview.html is a static, non-running
+ * visual reference (fake data) for human review.
  *
  * What it mounts (official slot seats, the same ones the shipped plugin/skill
  * pages use; docs/host-notes.md §5):
@@ -25,17 +34,17 @@
  * routes at the origin root (docs/host-notes.md §6). The panel writes no files
  * itself: it only calls its own routes; the host half owns the data root.
  *
- * 真机面板验证 not-run（D5）：本任务只用 node --check 校验了本文件的语法，
- * 没有把插件装进测试 profile、没有重启 DSH、没有在真实 Web GUI 里渲染过。
- * 手动验证步骤（与 task-7-report.md 一致）：
+ * 真机面板验证 not-run（D5）：本文件只用 node --check 校验过语法，没有把插件
+ * 装进测试 profile、没有重启 DSH、没有在真实 Web GUI 里渲染过。docs/ui-preview.html
+ * 是静态视觉预览（假数据、非真实面板），不能当作真机验证。手动验证步骤：
  *   1) 按 docs/host-notes.md §8 建 guizhi-test profile 并安装本仓库；
  *   2) 打开侧栏「归置」，确认三屏可切换；
  *   3) 点「重新扫描」，清爽页数字应变化；用量未知时用量列显示「未知」；
  *   4) 浏览器 Network 面板确认 api/guizhi/state 每 3 秒返回 200。
  *
  * Failure policy: a shell without the slots seats logs a warning and leaves the
- * GUI untouched; a failed fetch only renders an error line, never throws into
- * the shell. An external plugin must never take the whole GUI boot down.
+ * GUI untouched; a failed fetch only renders an error banner/line, never throws
+ * into the shell. An external plugin must never take the whole GUI boot down.
  *
  * @module @fanyingnie/dsh-guizhi/client
  */
@@ -79,6 +88,16 @@
     { id: 'map', title: '地图' },
   ]
 
+  /** One inline icon per scenario chip (stroke SVGs, no external assets). */
+  var SCENARIO_ICONS = {
+    content: 'pen',
+    design: 'palette',
+    dev: 'code',
+    research: 'search',
+    office: 'briefcase',
+    daily: 'sun',
+  }
+
   /** Human labels for the evidence keys the host half writes; unknown keys show raw. */
   var EVIDENCE_LABELS = {
     source: '来源',
@@ -97,6 +116,83 @@
 
   var STATUS_LABELS = { have: '已有', missing: '缺', redundant: '冗余' }
 
+  /** Proposal kind chips in the unified result card. */
+  var KIND_LABELS = { pack: '工具包', install: '安装', skill: '技能', plugin: '插件' }
+
+  /** Inline stroke-icon shapes, [tag, props] tuples shared by every icon() call. */
+  var ICON_SHAPES = {
+    layers: [
+      ['path', { d: 'M12 3.6 20 8l-8 4.4L4 8l8-4.4Z' }],
+      ['path', { d: 'M4 12.2 12 16.6l8-4.4' }],
+      ['path', { d: 'M4 16.2 12 20.6l8-4.4' }],
+    ],
+    grid: [
+      ['rect', { x: 3.5, y: 3.5, width: 7, height: 7, rx: 1.6 }],
+      ['rect', { x: 13.5, y: 3.5, width: 7, height: 7, rx: 1.6 }],
+      ['rect', { x: 3.5, y: 13.5, width: 7, height: 7, rx: 1.6 }],
+      ['rect', { x: 13.5, y: 13.5, width: 7, height: 7, rx: 1.6 }],
+    ],
+    wrench: [
+      ['path', { d: 'M14.6 6.4a3.6 3.6 0 0 0-4.7 4.5L4 16.8 7.2 20l5.9-5.9a3.6 3.6 0 0 0 4.5-4.7l-2.2 2.2-2.4-.6-.6-2.4 2.2-2.2Z' }],
+    ],
+    sparkles: [
+      ['path', { d: 'M11 3.8 12.6 7.6 16.4 9.2 12.6 10.8 11 14.6 9.4 10.8 5.6 9.2 9.4 7.6 11 3.8Z' }],
+      ['path', { d: 'M17.4 13.6 18.3 15.7 20.4 16.6 18.3 17.5 17.4 19.6 16.5 17.5 14.4 16.6 16.5 15.7 17.4 13.6Z' }],
+    ],
+    clock: [
+      ['circle', { cx: 12, cy: 12, r: 8 }],
+      ['path', { d: 'M12 7.4V12l3.1 2' }],
+    ],
+    refresh: [
+      ['path', { d: 'M19.5 12a7.5 7.5 0 1 1-2.2-5.3' }],
+      ['path', { d: 'M20 4.4v4.8h-4.8' }],
+    ],
+    check: [['path', { d: 'M4.8 12.4 9 16.6 19.2 6.4' }]],
+    alert: [
+      ['path', { d: 'M12 4.4 20.4 19.2H3.6L12 4.4Z' }],
+      ['path', { d: 'M12 9.8v4.2' }],
+      ['circle', { cx: 12, cy: 16.7, r: 0.8, fill: 'currentColor', stroke: 'none' }],
+    ],
+    info: [
+      ['circle', { cx: 12, cy: 12, r: 8.2 }],
+      ['path', { d: 'M12 11v5.2' }],
+      ['circle', { cx: 12, cy: 7.8, r: 0.8, fill: 'currentColor', stroke: 'none' }],
+    ],
+    chevron: [['path', { d: 'M7.6 9.8 12 14.2l4.4-4.4' }]],
+    pen: [
+      ['path', { d: 'M4 20.2h4L19.4 8.8l-4.2-4.2L4 16.2v4Z' }],
+      ['path', { d: 'M13.4 6.4l4.2 4.2' }],
+    ],
+    palette: [
+      ['path', { d: 'M12 3.2a8.8 8.8 0 0 0 0 17.6h1.4a2.4 2.4 0 0 0 1.1-4.5 1.9 1.9 0 0 1 1-3.6h1.9a3 3 0 0 0 3-3A8.8 8.8 0 0 0 12 3.2Z' }],
+      ['circle', { cx: 8.2, cy: 10.2, r: 0.9, fill: 'currentColor', stroke: 'none' }],
+      ['circle', { cx: 12.2, cy: 7.8, r: 0.9, fill: 'currentColor', stroke: 'none' }],
+      ['circle', { cx: 15.8, cy: 10.4, r: 0.9, fill: 'currentColor', stroke: 'none' }],
+    ],
+    code: [
+      ['path', { d: 'M9 7.4 4.4 12 9 16.6' }],
+      ['path', { d: 'M15 7.4 19.6 12 15 16.6' }],
+    ],
+    search: [
+      ['circle', { cx: 11, cy: 11, r: 6.4 }],
+      ['path', { d: 'M15.8 15.8 20 20' }],
+    ],
+    briefcase: [
+      ['rect', { x: 3.6, y: 7.2, width: 16.8, height: 11.8, rx: 2 }],
+      ['path', { d: 'M9 7.2V5.6A1.6 1.6 0 0 1 10.6 4h2.8A1.6 1.6 0 0 1 15 5.6v1.6' }],
+      ['path', { d: 'M3.6 12.4h16.8' }],
+    ],
+    sun: [
+      ['circle', { cx: 12, cy: 12, r: 4 }],
+      ['path', { d: 'M12 2.6v2.2M12 19.2v2.2M4.4 12H2.2M21.8 12h-2.2M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6' }],
+    ],
+    box: [
+      ['path', { d: 'M12 3.4 20 7.8v8.4L12 20.6 4 16.2V7.8l8-4.4Z' }],
+      ['path', { d: 'M4 7.8 12 12.2l8-4.4M12 12.2v8.4' }],
+    ],
+    dot: [['circle', { cx: 12, cy: 12, r: 3.2, fill: 'currentColor', stroke: 'none' }]],
+  }
+
   /** Inject the panel stylesheet once, tagged so re-apply never stacks sheets. */
   function ensureStyle() {
     if (typeof document === 'undefined' || !document.head) return
@@ -104,84 +200,205 @@
     var style = document.createElement('style')
     style.setAttribute(STYLE_MARKER, '')
     style.textContent = [
-      '.gz-root{display:flex;flex-direction:column;gap:14px;box-sizing:border-box;height:100%;padding:24px 28px;color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-bg-base,#fff);overflow:auto;font-size:13px}',
+      '.gz-root{--gz-fb-bg:#ffffff;--gz-fb-card:#f7f8fa;--gz-fb-text:#1f2328;--gz-fb-text-2:#59606b;--gz-fb-text-3:#8b919c;--gz-fb-border:rgba(31,35,40,.16);--gz-fb-border-soft:rgba(31,35,40,.09);--gz-fb-hover:rgba(31,35,40,.055);--gz-fb-accent:#2563eb;--gz-fb-accent-ink:#ffffff;--gz-fb-focus:#2563eb;--gz-fb-mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;--gz-fb-ok:#15803d;--gz-fb-warn:#b45309;--gz-fb-danger:#b91c1c;--gz-bg:var(--dsw-alias-bg-base,var(--gz-fb-bg));--gz-card-bg:var(--gz-fb-card);--gz-text:var(--dsw-alias-label-primary,var(--gz-fb-text));--gz-text-2:var(--dsw-alias-label-secondary,var(--gz-fb-text-2));--gz-text-3:var(--dsw-alias-label-tertiary,var(--gz-fb-text-3));--gz-border:var(--dsw-alias-border-l2,var(--gz-fb-border));--gz-border-soft:var(--dsw-alias-border-l3,var(--gz-fb-border-soft));--gz-hover:var(--dsw-alias-interactive-bg-hover,var(--gz-fb-hover));--gz-tint:var(--gz-fb-hover);--gz-accent:var(--dsw-alias-state-business-primary,var(--gz-fb-accent));--gz-accent-ink:var(--dsw-alias-label-primary-inverted,var(--gz-fb-accent-ink));--gz-focus:var(--dsw-focus-ring-color,var(--gz-fb-focus));--gz-focus-w:var(--dsw-focus-ring-width,2px);--gz-radius-sm:var(--dsw-radius-sm,8px);--gz-radius-md:var(--dsw-radius-md,12px);--gz-mono:var(--ds-font-family-code,var(--gz-fb-mono));--gz-ease:var(--ds-ease-in-out,cubic-bezier(.2,.7,.3,1));--gz-ok:var(--gz-fb-ok);--gz-warn:var(--gz-fb-warn);--gz-danger:var(--gz-fb-danger);display:flex;flex-direction:column;box-sizing:border-box;height:100%;min-width:264px;padding:20px 22px 0;color:var(--gz-text);background:var(--gz-bg);overflow:auto;font:13px/1.5 var(--dsw-font-family,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif);container-type:inline-size;container-name:gz;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2,var(--gz-fb-border-soft)) transparent}',
+      '@media (prefers-color-scheme:dark){.gz-root{--gz-fb-bg:#101216;--gz-fb-card:#171a21;--gz-fb-text:#e8eaed;--gz-fb-text-2:#a7aeb9;--gz-fb-text-3:#7f8794;--gz-fb-border:rgba(232,234,237,.18);--gz-fb-border-soft:rgba(232,234,237,.1);--gz-fb-hover:rgba(232,234,237,.07);--gz-fb-accent:#60a5fa;--gz-fb-accent-ink:#0b1220;--gz-fb-focus:#60a5fa;--gz-fb-ok:#4ade80;--gz-fb-warn:#fbbf24;--gz-fb-danger:#f87171}}',
       '.gz-root *{box-sizing:border-box}',
-      '.gz-head{display:flex;flex-direction:column;gap:10px;border-bottom:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.22));padding-bottom:12px}',
-      '.gz-title-row{display:flex;align-items:baseline;gap:10px}',
-      '.gz-title{margin:0;font-size:20px;line-height:1.25;font-weight:600;letter-spacing:.02em}',
-      '.gz-version{font-size:12px;letter-spacing:.03em;color:var(--dsw-alias-label-secondary,#6b7280)}',
-      '.gz-sub{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}',
-      '.gz-tabs{display:flex;gap:8px}',
-      '.gz-tab{border:1px solid transparent;background:transparent;color:inherit;font-size:13px;padding:6px 14px;border-radius:999px;cursor:pointer}',
-      '.gz-tab:hover{background:var(--dsw-alias-bg-subtle,rgba(128,128,128,.10))}',
-      '.gz-tab-on{background:var(--dsw-alias-bg-subtle,rgba(128,128,128,.14));border-color:var(--dsw-alias-border-subtle,rgba(128,128,128,.22));font-weight:600}',
-      '.gz-body{display:flex;flex-direction:column;gap:16px;flex:1 1 auto;min-height:0}',
-      '.gz-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}',
-      '.gz-section{display:flex;flex-direction:column;gap:10px}',
-      '.gz-section-title{margin:0;font-size:14px;font-weight:600}',
-      '.gz-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}',
-      '.gz-card{border:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.22));border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;background:var(--dsw-alias-bg-subtle,rgba(128,128,128,.05))}',
-      '.gz-card-num{font-size:22px;line-height:1.1;font-weight:650}',
-      '.gz-card-label{font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}',
-      '.gz-card-hint{font-size:11px;color:var(--dsw-alias-label-secondary,#6b7280)}',
-      '.gz-unknown{color:#b45309;font-weight:600}',
-      '.gz-num{font-variant-numeric:tabular-nums}',
-      '.gz-table-wrap{border:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.22));border-radius:10px;overflow:auto;max-height:52vh}',
-      '.gz-table{width:100%;border-collapse:collapse;font-size:12.5px}',
-      '.gz-table th,.gz-table td{text-align:left;padding:7px 12px;border-bottom:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.14));vertical-align:top}',
-      '.gz-table th{position:sticky;top:0;background:var(--dsw-alias-bg-base,#fff);font-weight:600}',
-      '.gz-table tr:last-child td{border-bottom:none}',
-      '.gz-tool-name{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap}',
-      '.gz-tool-owners{color:var(--dsw-alias-label-secondary,#6b7280);word-break:break-word}',
-      '.gz-warn-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px;font-size:12px;color:#92400e}',
+      '.gz-root ::selection{background:var(--gz-tint)}',
+      '.gz-root .gz-ico{display:block;flex:0 0 auto}',
+      '.gz-head{display:flex;flex-direction:column;gap:7px;padding-bottom:14px;border-bottom:1px solid var(--gz-border-soft);flex:0 0 auto}',
+      '.gz-brandbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}',
+      '.gz-brand{display:flex;align-items:center;gap:10px;min-width:0}',
+      '.gz-brand-mark{display:inline-flex;align-items:center;justify-content:center;width:33px;height:33px;border-radius:10px;background:var(--gz-accent);color:var(--gz-accent-ink);flex:0 0 auto;box-shadow:0 1px 2px rgba(0,0,0,.14)}',
+      '.gz-brand-mark .gz-ico{width:18px;height:18px}',
+      '.gz-brand-text{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}',
+      '.gz-title{margin:0;font-size:20px;line-height:1.2;font-weight:650;letter-spacing:.03em;color:var(--gz-text)}',
+      '.gz-wordmark{font-size:10px;line-height:1.6;letter-spacing:.16em;text-transform:uppercase;color:var(--gz-text-3);border:1px solid var(--gz-border-soft);border-radius:999px;padding:0 7px}',
+      '.gz-head-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}',
+      '.gz-sys{display:inline-flex;align-items:center;gap:6px;font-size:11px;line-height:1.6;color:var(--gz-text-2);padding:2px 9px 2px 8px;border:1px solid var(--gz-border-soft);border-radius:999px;background:var(--gz-card-bg);white-space:nowrap}',
+      '.gz-sys-dot{width:7px;height:7px;border-radius:50%;background:var(--gz-text-3);flex:0 0 auto;transition:background-color 140ms var(--gz-ease)}',
+      '.gz-sys-ready .gz-sys-dot{background:var(--gz-ok);box-shadow:0 0 0 3px rgba(22,163,74,.14)}',
+      '.gz-sys-loading .gz-sys-dot{background:var(--gz-warn);box-shadow:0 0 0 3px rgba(217,119,6,.14);animation:gz-pulse 1.3s ease-in-out infinite}',
+      '.gz-sys-error .gz-sys-dot{background:var(--gz-danger);box-shadow:0 0 0 3px rgba(220,38,38,.14)}',
+      '.gz-sub{margin:0;font-size:12px;line-height:1.55;color:var(--gz-text-2);max-width:62ch}',
+      '.gz-sub-note{color:var(--gz-text-3)}',
+      '.gz-navrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:12px;flex-wrap:wrap}',
+      '.gz-tabs{position:relative;display:flex;align-items:stretch;gap:2px;padding:3px;border:1px solid var(--gz-border-soft);border-radius:12px;background:var(--gz-card-bg);flex:0 1 auto;min-width:0}',
+      '.gz-tab{position:relative;z-index:1;flex:1 1 auto;min-width:58px;border:0;background:transparent;color:var(--gz-text-2);font:inherit;font-size:12.5px;font-weight:500;line-height:1.4;padding:6px 15px;border-radius:9px;cursor:pointer;transition:color 140ms var(--gz-ease)}',
+      '.gz-tab:hover{color:var(--gz-text)}',
+      '.gz-tab:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px}',
+      '.gz-tab-on{color:var(--gz-text);font-weight:650}',
+      '.gz-tab-ind{position:absolute;z-index:0;top:3px;bottom:3px;left:3px;width:calc((100% - 6px)/3);border-radius:9px;background:var(--gz-bg);border:1px solid var(--gz-border-soft);box-shadow:0 1px 2px rgba(0,0,0,.08);transition:transform 160ms var(--gz-ease)}',
+      '.gz-badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+      '.gz-badge{display:inline-flex;align-items:baseline;gap:5px;font-size:10.5px;line-height:1.7;color:var(--gz-text-2);background:var(--gz-card-bg);border:1px solid var(--gz-border-soft);border-radius:999px;padding:0 9px;white-space:nowrap}',
+      '.gz-badge-num{font-size:12px;font-weight:650;color:var(--gz-text);font-variant-numeric:tabular-nums}',
+      '.gz-body{display:flex;flex-direction:column;gap:14px;flex:1 0 auto;min-height:0;padding:16px 0 6px}',
+      '.gz-panel{display:flex;flex-direction:column;gap:14px;outline:none;animation:gz-fade 150ms var(--gz-ease)}',
+      '.gz-section{display:flex;flex-direction:column;gap:12px}',
+      '.gz-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}',
+      '.gz-section-title{margin:0;font-size:14px;font-weight:650;letter-spacing:.01em;color:var(--gz-text)}',
+      '.gz-meta{font-size:11px;color:var(--gz-text-3);font-variant-numeric:tabular-nums}',
+      '.gz-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}',
+      '.gz-card{position:relative;display:flex;flex-direction:column;gap:5px;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);padding:12px 13px 11px;background:var(--gz-card-bg);overflow:hidden;transition:border-color 140ms var(--gz-ease),background-color 140ms var(--gz-ease)}',
+      '.gz-card::before{content:"";position:absolute;top:0;bottom:0;left:0;width:3px;background:var(--gz-accent);opacity:.7}',
+      '.gz-card:hover{border-color:var(--gz-border)}',
+      '.gz-card-top{display:flex;align-items:center;gap:6px;color:var(--gz-text-2);min-width:0}',
+      '.gz-card-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;background:var(--gz-tint);color:var(--gz-accent);flex:0 0 auto}',
+      '.gz-card-label{font-size:11px;font-weight:500;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.gz-card-num{font-size:26px;line-height:1.05;font-weight:660;letter-spacing:-.01em;color:var(--gz-text);font-variant-numeric:tabular-nums}',
+      '.gz-card-hint{font-size:10px;line-height:1.45;color:var(--gz-text-3)}',
+      '.gz-card[data-tone=warn]::before{background:var(--gz-warn)}',
+      '.gz-card[data-tone=warn] .gz-card-icon{background:rgba(217,119,6,.13);color:var(--gz-warn)}',
+      '.gz-card[data-tone=warn] .gz-card-num{color:var(--gz-warn)}',
+      '.gz-note{display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.55;color:var(--gz-text-2);background:var(--gz-tint);border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-sm);padding:7px 10px}',
+      '.gz-note .gz-ico{margin-top:1px;color:var(--gz-warn)}',
+      '.gz-details{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-sm);background:var(--gz-card-bg);padding:0 11px}',
+      '.gz-details[open]{padding-bottom:8px}',
+      '.gz-details>summary{display:flex;align-items:center;gap:6px;cursor:pointer;list-style:none;padding:8px 0;font-size:11px;line-height:1.4;color:var(--gz-text-2)}',
+      '.gz-details>summary::-webkit-details-marker{display:none}',
+      '.gz-details>summary .gz-ico{color:var(--gz-text-3);transition:transform 140ms var(--gz-ease)}',
+      '.gz-details[open]>summary .gz-ico{transform:rotate(180deg)}',
+      '.gz-details>summary:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px;border-radius:4px}',
+      '.gz-warn-list{margin:0;padding-left:16px;display:flex;flex-direction:column;gap:3px;font-size:11px;line-height:1.5;color:var(--gz-warn)}',
       '.gz-warn-list li{word-break:break-word}',
+      '.gz-table-card{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);overflow:hidden;background:var(--gz-card-bg)}',
+      '.gz-table-scroll{max-height:52vh;overflow:auto;overscroll-behavior:contain}',
+      '.gz-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}',
+      '.gz-table th{position:sticky;top:0;z-index:1;text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--gz-text-3);background:var(--gz-card-bg);padding:9px 12px;border-bottom:1px solid var(--gz-border-soft);white-space:nowrap}',
+      '.gz-table td{padding:8px 12px;border-bottom:1px solid var(--gz-border-soft);vertical-align:middle}',
+      '.gz-table tbody tr{transition:background-color 120ms var(--gz-ease)}',
+      '.gz-table tbody tr:hover{background:var(--gz-hover)}',
+      '.gz-table tbody tr:last-child td{border-bottom:none}',
+      '.gz-tool-name{font-family:var(--gz-mono);font-size:12px;white-space:nowrap;color:var(--gz-text)}',
+      '.gz-owners{display:inline-flex;flex-wrap:wrap;gap:4px;max-width:100%}',
+      '.gz-owner-chip{display:inline-block;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;line-height:1.8;padding:0 7px;border-radius:999px;border:1px solid var(--gz-border-soft);background:var(--gz-bg);color:var(--gz-text-2)}',
+      '.gz-owner-none{color:var(--gz-text-3)}',
+      '.gz-usage{display:flex;align-items:center;gap:8px;min-width:108px}',
+      '.gz-usage-bar{position:relative;flex:1 1 auto;min-width:38px;height:6px;border-radius:999px;background:var(--gz-tint);overflow:hidden}',
+      '.gz-usage-fill{display:block;height:100%;border-radius:999px;background:var(--gz-accent);opacity:.8;transition:width 180ms var(--gz-ease)}',
+      '.gz-usage-num{font-size:12px;color:var(--gz-text-2);font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}',
+      '.gz-unknown{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--gz-text-3);background:var(--gz-tint);border:1px solid var(--gz-border-soft);border-radius:999px;padding:0 8px;line-height:1.7;cursor:help;white-space:nowrap}',
+      '.gz-empty{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:24px 20px;border:1px dashed var(--gz-border);border-radius:var(--gz-radius-md);background:var(--gz-card-bg);color:var(--gz-text-2);font-size:12.5px}',
+      '.gz-empty-icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;background:var(--gz-tint);color:var(--gz-text-2)}',
+      '.gz-empty p{margin:0;max-width:62ch;line-height:1.6}',
+      '.gz-empty strong{color:var(--gz-text);font-weight:650}',
+      '.gz-skel{display:flex;flex-direction:column;gap:12px}',
+      '.gz-skel-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}',
+      '.gz-skel-block{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:linear-gradient(90deg,var(--gz-card-bg) 25%,var(--gz-hover) 37%,var(--gz-card-bg) 63%);background-size:400% 100%;animation:gz-shimmer 1.4s linear infinite}',
+      '.gz-skel-card{height:88px}',
+      '.gz-skel-rows{display:flex;flex-direction:column;gap:1px;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);overflow:hidden;background:var(--gz-card-bg)}',
+      '.gz-skel-row{height:35px;margin:1px 12px;border-radius:6px;background:linear-gradient(90deg,var(--gz-card-bg) 25%,var(--gz-hover) 37%,var(--gz-card-bg) 63%);background-size:400% 100%;animation:gz-shimmer 1.4s linear infinite}',
       '.gz-chips{display:flex;flex-wrap:wrap;gap:8px}',
-      '.gz-chip{border:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.3));background:transparent;color:inherit;border-radius:999px;padding:7px 16px;font-size:13px;cursor:pointer}',
-      '.gz-chip:hover{background:var(--dsw-alias-bg-subtle,rgba(128,128,128,.10))}',
-      '.gz-chip-on{background:rgba(37,99,235,.14);border-color:rgba(37,99,235,.55);color:#1d4ed8;font-weight:600}',
-      '.gz-input{width:100%;border:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.3));border-radius:8px;background:transparent;color:inherit;font:inherit;padding:8px 10px;resize:vertical}',
-      '.gz-input-inline{width:150px;padding:5px 8px;font-size:12px}',
-      '.gz-counter{font-size:11px;color:var(--dsw-alias-label-secondary,#6b7280);text-align:right}',
-      '.gz-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-top:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.22));padding-top:12px}',
-      '.gz-actions-flush{border-top:none;padding-top:0}',
-      '.gz-btn{border:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.35));background:transparent;color:inherit;border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;white-space:nowrap}',
-      '.gz-btn:hover{background:var(--dsw-alias-bg-subtle,rgba(128,128,128,.10))}',
-      '.gz-btn:disabled{opacity:.5;cursor:default}',
-      '.gz-btn-primary{background:#2563eb;border-color:#2563eb;color:#fff;font-weight:600}',
-      '.gz-btn-primary:hover{background:#1d4ed8}',
-      '.gz-stages{display:flex;flex-direction:column;gap:12px}',
-      '.gz-stage{border:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.22));border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}',
-      '.gz-stage-title{margin:0;font-size:14px;font-weight:600;display:flex;align-items:baseline;gap:8px}',
-      '.gz-stage-id{font-size:11px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--dsw-alias-label-secondary,#6b7280)}',
-      '.gz-stage-empty{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}',
+      '.gz-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--gz-border);border-radius:999px;background:var(--gz-bg);color:var(--gz-text-2);font:inherit;font-size:12.5px;line-height:1.4;padding:6px 13px;cursor:pointer;transition:background-color 140ms var(--gz-ease),border-color 140ms,color 140ms,transform 140ms}',
+      '.gz-chip:hover{background:var(--gz-hover);color:var(--gz-text)}',
+      '.gz-chip:active{transform:scale(.98)}',
+      '.gz-chip:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px}',
+      '.gz-chip .gz-chip-check{display:none;color:var(--gz-accent)}',
+      '.gz-chip-on{background:var(--gz-tint);border-color:var(--gz-accent);color:var(--gz-accent);font-weight:600;box-shadow:inset 0 0 0 1px var(--gz-accent)}',
+      '.gz-chip-on .gz-chip-check{display:inline-flex}',
+      '.gz-chip-on .gz-chip-icon{color:var(--gz-accent)}',
+      '.gz-chip-icon{display:inline-flex;color:var(--gz-text-3)}',
+      '.gz-field{display:flex;flex-direction:column;gap:6px}',
+      '.gz-input{width:100%;border:1px solid var(--gz-border);border-radius:var(--gz-radius-sm);background:var(--gz-bg);color:var(--gz-text);font:inherit;font-size:12.5px;line-height:1.55;padding:8px 11px;resize:vertical;transition:border-color 140ms var(--gz-ease),box-shadow 140ms var(--gz-ease)}',
+      '.gz-input::placeholder{color:var(--gz-text-3)}',
+      '.gz-input:hover{border-color:var(--gz-text-3)}',
+      '.gz-input:focus-visible{outline:none;border-color:var(--gz-focus);box-shadow:0 0 0 calc(var(--gz-focus-w) - 1px) var(--gz-focus)}',
+      '.gz-input-inline{width:auto;flex:1 1 150px;min-width:110px;max-width:230px;padding:5px 9px;font-size:11.5px}',
+      '.gz-counter{display:flex;justify-content:flex-end;gap:8px;font-size:11px;line-height:1.5;color:var(--gz-text-3);font-variant-numeric:tabular-nums}',
+      '.gz-counter-warn{color:var(--gz-warn);font-weight:600}',
+      '.gz-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}',
+      '.gz-actions-flush{border:0;padding:0}',
+      '.gz-saved{font-size:11px;line-height:1.55;color:var(--gz-text-3);word-break:break-word;flex:1 1 200px;min-width:0}',
+      '.gz-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--gz-border);border-radius:var(--gz-radius-sm);background:var(--gz-bg);color:var(--gz-text);font:inherit;font-size:12.5px;font-weight:500;line-height:1.2;padding:7px 13px;cursor:pointer;white-space:nowrap;transition:background-color 140ms var(--gz-ease),border-color 140ms,color 140ms,box-shadow 140ms,transform 100ms}',
+      '.gz-btn:hover{background:var(--gz-hover)}',
+      '.gz-btn:active{transform:translateY(1px)}',
+      '.gz-btn:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px}',
+      '.gz-btn:disabled{opacity:.45;cursor:not-allowed;transform:none}',
+      '.gz-btn-primary{background:var(--gz-accent);border-color:var(--gz-accent);color:var(--gz-accent-ink);font-weight:600}',
+      '.gz-btn-primary:hover{background:var(--gz-accent);filter:brightness(1.07)}',
+      '.gz-btn-primary:disabled{filter:none}',
+      '.gz-map-meta{margin:0;font-size:11.5px;line-height:1.55;color:var(--gz-text-3);word-break:break-word}',
+      '.gz-timeline{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}',
+      '.gz-stage{position:relative;display:flex;gap:12px;padding-bottom:12px}',
+      '.gz-stage:last-child{padding-bottom:0}',
+      '.gz-stage-marker{position:relative;flex:0 0 auto;width:26px;display:flex;justify-content:center;padding-top:11px}',
+      '.gz-stage-marker::before{content:"";position:absolute;top:34px;bottom:-12px;left:50%;width:2px;transform:translateX(-50%);background:var(--gz-border-soft)}',
+      '.gz-stage:last-child .gz-stage-marker::before{display:none}',
+      '.gz-stage-num{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--gz-bg);border:1px solid var(--gz-border);color:var(--gz-text-2);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}',
+      '.gz-stage-body{flex:1 1 auto;min-width:0;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:var(--gz-card-bg);padding:12px 14px;display:flex;flex-direction:column;gap:10px}',
+      '.gz-stage-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.gz-stage-title{margin:0;font-size:13.5px;font-weight:650;color:var(--gz-text)}',
+      '.gz-stage-id{font-family:var(--gz-mono);font-size:10px;line-height:1.8;color:var(--gz-text-3);background:var(--gz-tint);border-radius:999px;padding:0 7px}',
+      '.gz-stage-count{margin-left:auto;font-size:10.5px;color:var(--gz-text-3)}',
+      '.gz-stage-empty{margin:0;font-size:11.5px;color:var(--gz-text-3)}',
       '.gz-caps{display:flex;flex-direction:column;gap:6px}',
       '.gz-cap-block{display:flex;flex-direction:column;gap:6px}',
-      '.gz-cap{display:flex;align-items:center;gap:8px;border:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.18));background:transparent;color:inherit;border-radius:8px;padding:7px 10px;font-size:12.5px;cursor:pointer;text-align:left;width:100%}',
-      '.gz-cap:hover{background:var(--dsw-alias-bg-subtle,rgba(128,128,128,.08))}',
-      '.gz-cap-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}',
-      '.gz-cap-have .gz-cap-dot{background:#16a34a}',
-      '.gz-cap-missing .gz-cap-dot{background:#d97706}',
-      '.gz-cap-redundant .gz-cap-dot{background:#9ca3af}',
-      '.gz-cap-title{flex:1 1 auto;word-break:break-word}',
-      '.gz-cap-status{font-size:11px;color:var(--dsw-alias-label-secondary,#6b7280)}',
-      '.gz-cap-have .gz-cap-status{color:#15803d}',
-      '.gz-cap-missing .gz-cap-status{color:#b45309}',
-      '.gz-evidence{border-left:3px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.3));margin-left:6px;padding:4px 0 4px 12px;display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--dsw-alias-label-secondary,#4b5563)}',
-      '.gz-evidence-line{word-break:break-word}',
-      '.gz-map-meta{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}',
-      '.gz-result{border:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.25));border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;background:var(--dsw-alias-bg-subtle,rgba(128,128,128,.04))}',
-      '.gz-result-title{margin:0;font-size:13px;font-weight:600}',
-      '.gz-result-item{font-size:12.5px;display:flex;flex-direction:column;gap:2px;padding:6px 0;border-bottom:1px dashed var(--dsw-alias-border-subtle,rgba(128,128,128,.18))}',
+      '.gz-cap{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:1px solid var(--gz-border-soft);border-radius:999px;background:var(--gz-bg);color:var(--gz-text);font:inherit;font-size:12px;line-height:1.4;padding:5px 11px 5px 7px;cursor:pointer;transition:background-color 140ms var(--gz-ease),border-color 140ms,box-shadow 140ms}',
+      '.gz-cap:hover{background:var(--gz-hover);border-color:var(--gz-border)}',
+      '.gz-cap:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px}',
+      '.gz-cap-icon{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:0 0 auto;background:var(--gz-tint);color:var(--gz-text-2)}',
+      '.gz-cap-title{flex:1 1 auto;min-width:0;word-break:break-word}',
+      '.gz-cap-status{flex:0 0 auto;font-size:10px;line-height:1.8;font-weight:600;padding:0 8px;border-radius:999px;background:var(--gz-tint);color:var(--gz-text-2);white-space:nowrap}',
+      '.gz-cap-status::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;margin-right:4px;vertical-align:middle;background:currentColor;opacity:.9}',
+      '.gz-cap-chevron{display:inline-flex;color:var(--gz-text-3);transition:transform 140ms var(--gz-ease)}',
+      '.gz-cap[aria-expanded=true] .gz-cap-chevron{transform:rotate(180deg)}',
+      '.gz-cap-have .gz-cap-icon{background:rgba(22,163,74,.14);color:var(--gz-ok)}',
+      '.gz-cap-have .gz-cap-status{background:rgba(22,163,74,.12);color:var(--gz-ok)}',
+      '.gz-cap-missing .gz-cap-icon{background:rgba(217,119,6,.15);color:var(--gz-warn)}',
+      '.gz-cap-missing .gz-cap-status{background:rgba(217,119,6,.13);color:var(--gz-warn)}',
+      '.gz-cap-redundant .gz-cap-icon{background:var(--gz-tint);color:var(--gz-text-3)}',
+      '.gz-cap-redundant .gz-cap-title{color:var(--gz-text-2)}',
+      '.gz-evidence{margin:0 0 2px 27px;padding:2px 0 2px 12px;border-left:2px solid var(--gz-border-soft);animation:gz-fade 140ms var(--gz-ease)}',
+      '.gz-evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(120px,100%),1fr));gap:4px 16px;margin:0}',
+      '.gz-evidence-row{display:flex;flex-direction:column;gap:1px;min-width:0;padding:3px 0}',
+      '.gz-evidence-key{font-size:10px;line-height:1.5;color:var(--gz-text-3);letter-spacing:.02em}',
+      '.gz-evidence-val{font-size:11.5px;line-height:1.5;color:var(--gz-text-2);word-break:break-word}',
+      '.gz-evidence-empty{margin:0;font-size:11.5px;color:var(--gz-text-3);padding:2px 0}',
+      '.gz-actionbar{position:sticky;bottom:-4px;z-index:3;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:var(--gz-bg);box-shadow:0 -8px 20px -14px rgba(0,0,0,.3)}',
+      '.gz-actionbar-main{display:flex;flex-wrap:wrap;gap:7px;align-items:center}',
+      '.gz-actionbar-snap{display:flex;flex-wrap:wrap;gap:7px;align-items:center;padding-top:8px;border-top:1px dashed var(--gz-border-soft)}',
+      '.gz-snap-label{font-size:10.5px;color:var(--gz-text-3);letter-spacing:.02em;white-space:nowrap}',
+      '.gz-result{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:var(--gz-card-bg);padding:12px 14px;display:flex;flex-direction:column;gap:10px;animation:gz-fade 150ms var(--gz-ease)}',
+      '.gz-result-head{display:flex;align-items:flex-start;gap:9px}',
+      '.gz-result-icon{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--gz-tint);color:var(--gz-text-2)}',
+      '.gz-result[data-tone=success] .gz-result-icon{background:rgba(22,163,74,.14);color:var(--gz-ok)}',
+      '.gz-result[data-tone=warn] .gz-result-icon{background:rgba(217,119,6,.14);color:var(--gz-warn)}',
+      '.gz-result-headings{display:flex;flex-direction:column;gap:1px;min-width:0}',
+      '.gz-result-kicker{font-size:9.5px;line-height:1.5;letter-spacing:.1em;color:var(--gz-text-3)}',
+      '.gz-result-title{margin:0;font-size:12.5px;font-weight:650;line-height:1.45;color:var(--gz-text);word-break:break-word}',
+      '.gz-result-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border-top:1px solid var(--gz-border-soft)}',
+      '.gz-result-item{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;padding:7px 0;border-bottom:1px solid var(--gz-border-soft);font-size:12px}',
       '.gz-result-item:last-child{border-bottom:none}',
-      '.gz-result-meta{font-size:11px;color:var(--dsw-alias-label-secondary,#6b7280);word-break:break-all}',
-      '.gz-draft{width:100%;min-height:120px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}',
-      '.gz-empty{border:1px dashed var(--dsw-alias-border-subtle,rgba(128,128,128,.35));border-radius:10px;padding:22px;display:flex;flex-direction:column;gap:8px;align-items:flex-start;color:var(--dsw-alias-label-secondary,#4b5563);font-size:13px}',
-      '.gz-empty p{margin:0}',
-      '.gz-status{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280);border-top:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.18));padding-top:8px;min-height:22px}',
-      '.gz-status-error{color:#b91c1c;font-weight:600}',
-      '.gz-status-ok{color:#15803d}',
-      '.gz-status-warn{color:#b45309}',
-      '.gz-hint{font-size:11.5px;color:var(--dsw-alias-label-secondary,#6b7280)}',
+      '.gz-kind-chip{flex:0 0 auto;font-size:10px;font-weight:600;line-height:1.8;color:var(--gz-text-2);background:var(--gz-tint);border:1px solid var(--gz-border-soft);border-radius:999px;padding:0 7px;white-space:nowrap}',
+      '.gz-result-item-title{flex:1 1 auto;min-width:0;word-break:break-word}',
+      '.gz-result-effect{font-size:11px;color:var(--gz-text-3);word-break:break-word}',
+      '.gz-result-meta{margin:0;font-size:11.5px;line-height:1.55;color:var(--gz-text-2);word-break:break-word}',
+      '.gz-hash{font-family:var(--gz-mono);font-size:11px;background:var(--gz-tint);border-radius:6px;padding:1px 6px;color:var(--gz-text-2);word-break:break-all}',
+      '.gz-result-ok{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--gz-ok)}',
+      '.gz-result-err{display:flex;align-items:flex-start;gap:6px;margin:0;font-size:11.5px;line-height:1.5;color:var(--gz-danger);word-break:break-word}',
+      '.gz-result-err .gz-ico{margin-top:2px}',
+      '.gz-draft{min-height:120px;font-family:var(--gz-mono);font-size:11.5px;line-height:1.55}',
+      '.gz-banner{display:flex;align-items:flex-start;gap:9px;border-radius:var(--gz-radius-md);padding:10px 12px;font-size:12px;line-height:1.5;animation:gz-fade 150ms var(--gz-ease)}',
+      '.gz-banner .gz-ico{margin-top:2px}',
+      '.gz-banner-error{border:1px solid rgba(220,38,38,.4);background:rgba(220,38,38,.08);color:var(--gz-danger)}',
+      '.gz-banner-warn{border:1px solid rgba(217,119,6,.32);background:rgba(217,119,6,.07);color:var(--gz-text-2)}',
+      '.gz-banner-body{display:flex;flex-direction:column;gap:4px;min-width:0}',
+      '.gz-banner-body strong{font-size:12px;font-weight:650;color:var(--gz-text)}',
+      '.gz-banner-text{min-width:0;word-break:break-word}',
+      '.gz-banner-hint{font-size:10.5px;line-height:1.5;color:var(--gz-text-3);flex:0 1 auto}',
+      '.gz-status{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-height:34px;padding:9px 0 11px;margin-top:2px;border-top:1px solid var(--gz-border-soft);font-size:11px;line-height:1.5;color:var(--gz-text-3);flex:0 0 auto}',
+      '.gz-status-ok{color:var(--gz-ok);font-weight:600}',
+      '.gz-status-warn{color:var(--gz-warn);font-weight:600}',
+      '.gz-status-error{color:var(--gz-danger);font-weight:600;word-break:break-word}',
+      '.gz-status-ver{margin-left:auto;font-family:var(--gz-mono);font-size:10.5px;color:var(--gz-text-3)}',
+      '.gz-hint{font-size:11px;line-height:1.55;color:var(--gz-text-3);word-break:break-word}',
+      '@keyframes gz-pulse{0%,100%{opacity:1}50%{opacity:.3}}',
+      '@keyframes gz-fade{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}',
+      '@keyframes gz-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}',
+      '@container gz (max-width:520px){.gz-cards,.gz-skel-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.gz-card-num{font-size:23px}.gz-tab{padding:6px 11px}.gz-badges{gap:5px}}',
+      '@container gz (max-width:340px){.gz-card-hint{display:none}.gz-badge{padding:0 7px}.gz-btn{padding:6px 10px}.gz-actionbar{padding:9px 10px}.gz-snap-label{display:none}.gz-input-inline{max-width:none}.gz-cap{gap:6px;padding:5px 9px 5px 6px}.gz-cap-status{font-size:9.5px;padding:0 6px}.gz-stage-body{padding:10px 11px}.gz-stage-head{gap:6px}.gz-stage-count{display:none}.gz-evidence{margin-left:14px;padding-left:10px}}',
+      '@container gz (max-width:440px){.gz-table th,.gz-table td{padding:8px 9px}.gz-card{padding:11px 11px 10px}.gz-title{font-size:19px}.gz-evidence-grid{gap:4px 12px}.gz-owner-chip{max-width:104px}.gz-usage{min-width:84px}.gz-table{font-size:12px}.gz-tool-name{font-size:11.5px}}',
+      '@container gz (max-width:330px){.gz-table thead{display:none}.gz-table,.gz-table tbody{display:block}.gz-table tr{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:8px 10px;border-bottom:1px solid var(--gz-border-soft)}.gz-table tbody tr:last-child{border-bottom:none}.gz-table tbody tr:hover{background:var(--gz-hover)}.gz-table td{display:block;border:0;padding:0}.gz-table td:nth-child(1){flex:1 1 auto;min-width:0}.gz-table td:nth-child(2){order:3;flex:1 1 100%}.gz-table td:nth-child(3){flex:0 0 auto}.gz-usage-bar{min-width:26px}}',
+      '@media (prefers-reduced-motion:reduce){.gz-root,.gz-root *,.gz-root *::before,.gz-root *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}',
     ].join('\n')
     document.head.appendChild(style)
   }
@@ -281,11 +498,6 @@
     return chars.length > max ? chars.slice(0, max).join('') : text
   }
 
-  /** Owners joined for display; empty means "not attributed", shown as a dash. */
-  function ownersText(owners) {
-    return Array.isArray(owners) && owners.length > 0 ? owners.join('、') : '—'
-  }
-
   /** Display title for a scenario id. */
   function scenarioTitle(id) {
     for (var index = 0; index < SCENARIOS.length; index += 1) {
@@ -317,17 +529,16 @@
     return String(value)
   }
 
-  /** Evidence object -> readable "label: value" lines (never renders raw keys as English only). */
-  function evidenceLines(evidence) {
-    if (evidence === null || typeof evidence !== 'object' || Array.isArray(evidence)) return ['（无证据字段）']
+  /** Evidence object -> [{label, value}] pairs for the grid (never raw keys only). */
+  function evidencePairs(evidence) {
+    if (evidence === null || typeof evidence !== 'object' || Array.isArray(evidence)) return []
     var keys = Object.keys(evidence)
-    if (keys.length === 0) return ['（无证据字段）']
-    var lines = []
+    var pairs = []
     for (var index = 0; index < keys.length; index += 1) {
       var key = keys[index]
-      lines.push((EVIDENCE_LABELS[key] || key) + '：' + evidenceValue(evidence[key]))
+      pairs.push({ label: EVIDENCE_LABELS[key] || key, value: evidenceValue(evidence[key]) })
     }
-    return lines
+    return pairs
   }
 
   /**
@@ -383,6 +594,37 @@
       var copyHook = useState('')
       var copyHint = copyHook[0]
       var setCopyHint = copyHook[1]
+
+      /** Build one inline stroke icon from ICON_SHAPES. */
+      function icon(name, size) {
+        var shapes = ICON_SHAPES[name] || ICON_SHAPES.dot
+        var children = []
+        for (var index = 0; index < shapes.length; index += 1) {
+          var shape = shapes[index]
+          var props = { key: 'shape-' + index }
+          for (var key in shape[1]) {
+            if (Object.prototype.hasOwnProperty.call(shape[1], key)) props[key] = shape[1][key]
+          }
+          children.push(h(shape[0], props))
+        }
+        return h(
+          'svg',
+          {
+            viewBox: '0 0 24 24',
+            width: size || 14,
+            height: size || 14,
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 1.8,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            focusable: 'false',
+            className: 'gz-ico',
+          },
+          children,
+        )
+      }
 
       /** Fetch GET state once (also used by the 3s poll). */
       var loadState = useCallback(function () {
@@ -589,19 +831,29 @@
         }))
       }
 
+      /** Collapsible warnings block (details/summary, keyboard accessible). */
+      function renderWarningDetails(warnings, label) {
+        if (!Array.isArray(warnings) || warnings.length === 0) return null
+        return h('details', { className: 'gz-details' },
+          h('summary', {}, icon('alert', 12), h('span', {}, (label || '警告') + ' ' + String(warnings.length) + ' 条')),
+          renderWarnings(warnings),
+        )
+      }
+
       /** State-level read warnings (e.g. a corrupt scan.json) are never hidden. */
       function renderStateWarnings() {
         if (data === null || !Array.isArray(data.warnings) || data.warnings.length === 0) return null
-        return h('div', { className: 'gz-result' },
-          h('h3', { className: 'gz-result-title' }, '状态读取提示'),
-          renderWarnings(data.warnings),
+        return h('div', { className: 'gz-banner gz-banner-warn', role: 'status' },
+          icon('alert', 15),
+          h('div', { className: 'gz-banner-body' },
+            h('strong', {}, '状态读取提示'),
+            renderWarnings(data.warnings),
+          ),
         )
       }
 
       function renderStatusBar() {
         var items = []
-        if (view.loading && data === null) items.push(h('span', { key: 'loading', className: 'gz-hint' }, '正在读取状态…'))
-        if (view.error !== null) items.push(h('span', { key: 'load-error', className: 'gz-status-error' }, '状态读取失败：' + view.error))
         if (action.busy !== '') items.push(h('span', { key: 'busy', className: 'gz-hint' }, '正在执行：' + action.busy + '…'))
         if (action.message !== '') items.push(h('span', { key: 'message', className: 'gz-status-ok' }, action.message))
         if (action.error !== '') items.push(h('span', { key: 'action-error', className: 'gz-status-error' }, action.error))
@@ -609,109 +861,325 @@
           items.push(h('span', { key: 'action-warnings', className: 'gz-status-warn' }, '警告 ' + action.warnings.length + ' 条（见结果区）'))
         }
         if (view.updatedAt !== null) items.push(h('span', { key: 'updated', className: 'gz-hint' }, '更新于 ' + new Date(view.updatedAt).toLocaleTimeString()))
-        return h('footer', { className: 'gz-status' }, items)
+        if (items.length === 0) items.push(h('span', { key: 'idle', className: 'gz-hint' }, '面板已连接 · 每 3 秒自动刷新'))
+        items.push(h('span', { key: 'version', className: 'gz-status-ver' }, 'v' + PLUGIN_VERSION))
+        return h('footer', { className: 'gz-status', 'aria-live': 'polite' }, items)
+      }
+
+      function renderErrorBanner() {
+        if (view.error === null) return null
+        return h('div', { className: 'gz-banner gz-banner-error', role: 'alert' },
+          icon('alert', 15),
+          h('span', { className: 'gz-banner-text' }, '状态读取失败：' + view.error),
+          h('span', { className: 'gz-banner-hint' }, '面板会继续每 3 秒重试。'),
+        )
+      }
+
+      /** Scan totals for header badges; null until the first scan exists. */
+      function scanTotals() {
+        var scan = data !== null && typeof data === 'object' && data.scan !== null && typeof data.scan === 'object' ? data.scan : null
+        if (scan === null) return null
+        return scan.totals !== null && typeof scan.totals === 'object' ? scan.totals : {}
+      }
+
+      function badgeValue(totals, key) {
+        if (totals === null) return '—'
+        var value = totals[key]
+        return value === null || value === undefined ? '—' : String(value)
+      }
+
+      /** Status dot in the brand header: ready / loading / error. */
+      function systemStatus() {
+        if (view.error !== null) return { tone: 'error', label: '错误' }
+        if (view.loading && data === null) return { tone: 'loading', label: '加载中' }
+        if (action.busy !== '') return { tone: 'loading', label: '执行中' }
+        return { tone: 'ready', label: '就绪' }
+      }
+
+      function renderHeader() {
+        var status = systemStatus()
+        return h('header', { className: 'gz-head' },
+          h('div', { className: 'gz-brandbar' },
+            h('div', { className: 'gz-brand' },
+              h('span', { className: 'gz-brand-mark' }, icon('layers', 18)),
+              h('div', { className: 'gz-brand-text' },
+                h('h1', { className: 'gz-title' }, '归置'),
+                h('span', { className: 'gz-wordmark' }, 'Stow'),
+              ),
+            ),
+            h('div', { className: 'gz-head-actions' },
+              h('span', { className: 'gz-sys gz-sys-' + status.tone, title: '系统状态：' + status.label },
+                h('span', { className: 'gz-sys-dot' }),
+                h('span', { className: 'gz-sys-label' }, status.label),
+              ),
+              h('button', {
+                type: 'button',
+                className: 'gz-btn gz-btn-primary',
+                disabled: action.busy !== '',
+                onClick: onScan,
+                title: '重新扫描本机的插件 / 工具 / 技能 / 近 30 天用量（只读）',
+              }, icon('refresh', 14), '重新扫描'),
+            ),
+          ),
+          h('p', { className: 'gz-sub' },
+            '把本机 DSH 的插件、工具、技能、场景与缺口整理清楚。',
+            h('span', { className: 'gz-sub-note' }, ' 只读扫描 + 写本机状态 · 不改 profile · 不代发。'),
+          ),
+        )
+      }
+
+      function renderTabs() {
+        var activeIndex = 0
+        for (var index = 0; index < TABS.length; index += 1) {
+          if (TABS[index].id === tab) activeIndex = index
+        }
+        var totals = scanTotals()
+        var badges = [
+          { key: 'plugins', label: '插件' },
+          { key: 'tools', label: '工具' },
+          { key: 'skills', label: '技能' },
+        ]
+        return h('div', { className: 'gz-navrow' },
+          h('nav', { className: 'gz-tabs', role: 'tablist', 'aria-label': '归置三屏' },
+            h('span', { className: 'gz-tab-ind', 'aria-hidden': 'true', style: { transform: 'translateX(' + String(activeIndex * 100) + '%)' } }),
+            TABS.map(function (item) {
+              var on = tab === item.id
+              return h('button', {
+                key: item.id,
+                type: 'button',
+                role: 'tab',
+                id: 'gz-tab-' + item.id,
+                'aria-selected': on ? 'true' : 'false',
+                'aria-controls': 'gz-panel-' + item.id,
+                className: 'gz-tab' + (on ? ' gz-tab-on' : ''),
+                onClick: function () {
+                  setTab(item.id)
+                },
+              }, item.title)
+            }),
+          ),
+          h('div', { className: 'gz-badges', 'aria-label': '家底汇总' }, badges.map(function (badge) {
+            return h('span', { className: 'gz-badge', key: badge.key },
+              h('span', {}, badge.label),
+              h('span', { className: 'gz-badge-num' }, badgeValue(totals, badge.key)),
+            )
+          })),
+        )
+      }
+
+      function panelProps(id) {
+        return { className: 'gz-panel', role: 'tabpanel', id: 'gz-panel-' + id, 'aria-labelledby': 'gz-tab-' + id }
+      }
+
+      function renderSkeleton() {
+        var rows = [0, 1, 2, 3, 4]
+        return h('section', panelProps(tab),
+          h('div', { className: 'gz-skel', 'aria-hidden': 'true' },
+            h('div', { className: 'gz-skel-cards' }, [0, 1, 2, 3].map(function (index) {
+              return h('div', { className: 'gz-skel-block gz-skel-card', key: 'skel-card-' + index })
+            })),
+            h('div', { className: 'gz-skel-rows' }, rows.map(function (index) {
+              return h('div', { className: 'gz-skel-row', key: 'skel-row-' + index })
+            })),
+          ),
+          h('p', { className: 'gz-hint' }, '正在读取状态…'),
+        )
       }
 
       function renderClean() {
         var scan = data !== null && typeof data === 'object' && data.scan !== null && typeof data.scan === 'object' ? data.scan : null
-        var header = h('div', { className: 'gz-bar' },
-          h('h2', { className: 'gz-section-title' }, '本机家底'),
-          h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: action.busy !== '', onClick: onScan }, '重新扫描'),
-        )
         if (scan === null) {
-          return h('div', { className: 'gz-section' }, header,
+          return h('section', panelProps('clean'),
+            h('div', { className: 'gz-section-head' }, h('h2', { className: 'gz-section-title' }, '本机家底')),
             h('div', { className: 'gz-empty' },
-              h('p', {}, '还没有扫描结果。'),
-              h('p', {}, '点右上角「重新扫描」采集本机的插件、工具、技能与近 30 天用量；扫描只读，不改 profile、不调用模型。'),
+              h('span', { className: 'gz-empty-icon' }, icon('layers', 20)),
+              h('p', {}, h('strong', {}, '还没有扫描结果。')),
+              h('p', {}, '先点右上角「重新扫描」采集本机的插件、工具、技能与近 30 天用量；扫描只读，不改 profile、不调用模型。'),
             ),
           )
         }
         var totals = scan.totals !== null && typeof scan.totals === 'object' ? scan.totals : {}
         var unknown = usageUnknown(scan)
         var cards = [
-          { key: 'plugins', label: '插件', value: totals.plugins },
-          { key: 'tools', label: '工具', value: totals.tools },
-          { key: 'skills', label: '技能', value: totals.skills },
-          { key: 'unused', label: '近 30 天未用', value: totals.unusedTools, hint: unknown ? '用量未知，只统计已知 0 次' : '已知 0 次调用的工具' },
+          { key: 'plugins', label: '插件', value: totals.plugins, icon: 'grid' },
+          { key: 'tools', label: '工具', value: totals.tools, icon: 'wrench' },
+          { key: 'skills', label: '技能', value: totals.skills, icon: 'sparkles' },
+          { key: 'unused', label: '近 30 天未用', value: totals.unusedTools, icon: 'clock', hint: unknown ? '用量未知，只统计已知 0 次' : '已知 0 次调用的工具', tone: 'warn' },
         ]
         var toolRows = Array.isArray(scan.tools) ? scan.tools : []
         var scanWarnings = Array.isArray(scan.warnings) ? scan.warnings : []
-        return h('div', { className: 'gz-section' }, header,
-          h('div', { className: 'gz-cards' }, cards.map(function (card) {
-            var value = card.value === null || card.value === undefined ? '未知' : String(card.value)
-            return h('div', { className: 'gz-card', key: card.key },
-              h('span', { className: 'gz-card-num' }, value),
-              h('span', { className: 'gz-card-label' }, card.label),
-              card.hint !== undefined ? h('span', { className: 'gz-card-hint' }, card.hint) : null,
-            )
-          })),
-          unknown ? h('p', { className: 'gz-hint' }, '用量统计不可用：工具表用量列显示「未知」，绝不显示 0（Review Focus #2）。') : null,
-          scanWarnings.length > 0 ? h('details', {}, h('summary', { className: 'gz-hint' }, '扫描提示 ' + scanWarnings.length + ' 条'), renderWarnings(scanWarnings)) : null,
-          toolRows.length === 0
-            ? h('div', { className: 'gz-empty' }, h('p', {}, '扫描结果里没有工具（宿主 tools 服务不可用？）'))
-            : h('div', { className: 'gz-table-wrap' },
-                h('table', { className: 'gz-table' },
-                  h('thead', {}, h('tr', {},
-                    h('th', {}, '工具'),
-                    h('th', {}, '归属（owners）'),
-                    h('th', {}, '近 30 天用量'),
-                  )),
-                  h('tbody', {}, toolRows.map(function (tool, index) {
-                    var valid = tool !== null && typeof tool === 'object'
-                    var name = valid && typeof tool.name === 'string' ? tool.name : '(无效行)'
-                    var unknownCell = valid && tool.used30d == null // eslint-disable-line eqeqeq
-                    return h('tr', { key: 'tool-' + index },
-                      h('td', { className: 'gz-tool-name' }, name),
-                      h('td', { className: 'gz-tool-owners' }, ownersText(valid ? tool.owners : null)),
-                      h('td', { className: unknownCell ? 'gz-unknown' : 'gz-num' }, usageText(valid ? tool : null)),
-                    )
-                  })),
+        var maxUsage = 0
+        for (var index = 0; index < toolRows.length; index += 1) {
+          var row = toolRows[index]
+          if (row !== null && typeof row === 'object' && row.used30d != null) { // eslint-disable-line eqeqeq
+            var numeric = Number(row.used30d)
+            if (isFinite(numeric) && numeric > maxUsage) maxUsage = numeric
+          }
+        }
+        return h('section', panelProps('clean'),
+          h('div', { className: 'gz-section' },
+            h('div', { className: 'gz-section-head' },
+              h('h2', { className: 'gz-section-title' }, '本机家底'),
+              h('span', { className: 'gz-meta' }, '扫描时间：' + (typeof scan.generatedAt === 'string' ? scan.generatedAt : '未知')),
+            ),
+            h('div', { className: 'gz-cards' }, cards.map(function (card) {
+              var value = card.value === null || card.value === undefined ? '未知' : String(card.value)
+              return h('article', { className: 'gz-card', key: card.key, 'data-tone': card.tone || 'accent' },
+                h('div', { className: 'gz-card-top' },
+                  h('span', { className: 'gz-card-icon' }, icon(card.icon, 13)),
+                  h('span', { className: 'gz-card-label' }, card.label),
                 ),
-              ),
-          h('p', { className: 'gz-hint' }, '扫描时间：' + (typeof scan.generatedAt === 'string' ? scan.generatedAt : '未知') + (unknown ? '；用量未知（used30d = null）' : '')),
+                h('span', { className: 'gz-card-num' }, value),
+                card.hint !== undefined ? h('span', { className: 'gz-card-hint' }, card.hint) : null,
+              )
+            })),
+            unknown
+              ? h('div', { className: 'gz-note' }, icon('alert', 13),
+                  h('span', {}, '用量统计不可用：工具表用量列显示「未知」，绝不显示 0。'),
+                )
+              : null,
+            renderWarningDetails(scanWarnings, '扫描提示'),
+            toolRows.length === 0
+              ? h('div', { className: 'gz-empty' },
+                  h('span', { className: 'gz-empty-icon' }, icon('box', 20)),
+                  h('p', {}, h('strong', {}, '扫描结果里没有工具。')),
+                  h('p', {}, '宿主 tools 服务可能不可用；可以在会话里运行 stow_probe 进一步排查。'),
+                )
+              : h('div', { className: 'gz-table-card' },
+                  h('div', { className: 'gz-table-scroll' },
+                    h('table', { className: 'gz-table' },
+                      h('thead', {}, h('tr', {},
+                        h('th', {}, '工具'),
+                        h('th', {}, '归属（owners）'),
+                        h('th', {}, '近 30 天用量'),
+                      )),
+                      h('tbody', {}, toolRows.map(function (tool, toolIndex) {
+                        var valid = tool !== null && typeof tool === 'object'
+                        var name = valid && typeof tool.name === 'string' ? tool.name : '(无效行)'
+                        var known = valid && tool.used30d != null // eslint-disable-line eqeqeq
+                        var usageCell
+                        if (!known) {
+                          usageCell = h('span', {
+                            className: 'gz-unknown',
+                            title: '用量未知：宿主未提供近 30 天用量；未知不会显示成 0。',
+                          }, '未知')
+                        } else {
+                          var usageNumber = Number(tool.used30d)
+                          var width = 0
+                          if (isFinite(usageNumber) && maxUsage > 0) width = Math.max(usageNumber > 0 ? 8 : 0, Math.round((usageNumber / maxUsage) * 100))
+                          usageCell = h('div', { className: 'gz-usage' },
+                            h('span', { className: 'gz-usage-bar', 'aria-hidden': 'true' },
+                              h('span', { className: 'gz-usage-fill', style: { width: String(width) + '%' } }),
+                            ),
+                            h('span', { className: 'gz-usage-num gz-num' }, String(usageText(valid ? tool : null))),
+                          )
+                        }
+                        return h('tr', { key: 'tool-' + toolIndex },
+                          h('td', { className: 'gz-tool-name' }, name),
+                          h('td', {}, ownerChips(valid ? tool.owners : null)),
+                          h('td', {}, usageCell),
+                        )
+                      })),
+                    ),
+                  ),
+                ),
+            h('p', { className: 'gz-hint' }, '扫描只读采集本机事实；用量未知（used30d = null）显示「未知」而不是 0。'),
+          ),
         )
+      }
+
+      /** owners -> chips (or an em dash when the scan could not attribute). */
+      function ownerChips(owners) {
+        if (!Array.isArray(owners) || owners.length === 0) return h('span', { className: 'gz-owner-none' }, '—')
+        var chips = []
+        for (var index = 0; index < owners.length; index += 1) {
+          chips.push(h('span', { className: 'gz-owner-chip', key: 'owner-' + index, title: String(owners[index]) }, String(owners[index])))
+        }
+        return h('span', { className: 'gz-owners' }, chips)
       }
 
       function renderScenarios() {
         var selected = scenarioDraft.selected
         var custom = scenarioDraft.custom
+        var customLength = Array.from(custom).length
+        var counterText = String(customLength) + ' / ' + String(CUSTOM_MAX_CHARS)
+        if (customLength >= CUSTOM_MAX_CHARS) counterText += ' · 已到上限'
+        else if (customLength >= CUSTOM_MAX_CHARS - 20) counterText += ' · 接近上限'
         var savedText = '还没有保存过场景选择'
         if (selections !== null) {
           var savedSelected = Array.isArray(selections.selected) ? selections.selected : []
           savedText = '已保存：' + (savedSelected.length > 0 ? savedSelected.map(scenarioTitle).join('、') : '无内置场景')
           if (typeof selections.custom === 'string' && selections.custom !== '') savedText += '；自定义：' + selections.custom
         }
-        return h('div', { className: 'gz-section' },
-          h('h2', { className: 'gz-section-title' }, '选场景'),
-          h('p', { className: 'gz-hint' }, '内置 6 个场景可多选；自定义一句话用于补充。保存只写本机状态，不生成工作流、不调用模型。'),
-          h('div', { className: 'gz-chips' }, SCENARIOS.map(function (scenario) {
-            var active = selected.indexOf(scenario.id) >= 0
-            return h('button', {
-              key: scenario.id,
-              type: 'button',
-              className: 'gz-chip' + (active ? ' gz-chip-on' : ''),
-              'aria-pressed': active ? 'true' : 'false',
-              onClick: function () {
-                onToggleChip(scenario.id)
+        return h('section', panelProps('scenarios'),
+          h('div', { className: 'gz-section' },
+            h('div', { className: 'gz-section-head' },
+              h('h2', { className: 'gz-section-title' }, '选场景'),
+              h('span', { className: 'gz-meta' }, '内置 6 个 · 可多选'),
+            ),
+            h('p', { className: 'gz-hint' }, '内置 6 个场景可多选；自定义一句话用于补充。保存只写本机状态，不生成工作流、不调用模型。'),
+            h('div', { className: 'gz-chips' }, SCENARIOS.map(function (scenario) {
+              var active = selected.indexOf(scenario.id) >= 0
+              return h('button', {
+                key: scenario.id,
+                type: 'button',
+                className: 'gz-chip' + (active ? ' gz-chip-on' : ''),
+                'aria-pressed': active ? 'true' : 'false',
+                onClick: function () {
+                  onToggleChip(scenario.id)
+                },
               },
-            }, scenario.title)
-          })),
-          h('div', {},
-            h('textarea', {
-              className: 'gz-input',
-              rows: 2,
-              maxLength: CUSTOM_MAX_CHARS,
-              placeholder: '用一句话描述你的场景（200 字以内）',
-              value: custom,
-              onChange: onCustomChange,
-            }),
-            h('div', { className: 'gz-counter' }, String(Array.from(custom).length) + ' / ' + String(CUSTOM_MAX_CHARS)),
-          ),
-          h('div', { className: 'gz-actions gz-actions-flush' },
-            h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: action.busy !== '', onClick: onSaveScenarios }, '保存场景'),
-            h('span', { className: 'gz-hint' }, savedText),
+                h('span', { className: 'gz-chip-icon' }, icon(SCENARIO_ICONS[scenario.id] || 'dot', 13)),
+                h('span', {}, scenario.title),
+                h('span', { className: 'gz-chip-check' }, icon('check', 12)),
+              )
+            })),
+            h('div', { className: 'gz-field' },
+              h('textarea', {
+                className: 'gz-input',
+                rows: 2,
+                maxLength: CUSTOM_MAX_CHARS,
+                placeholder: '用一句话描述你的场景（200 字以内）',
+                value: custom,
+                onChange: onCustomChange,
+                'aria-label': '自定义场景（一句话，200 字以内）',
+              }),
+              h('div', { className: 'gz-counter' },
+                h('span', { className: customLength >= CUSTOM_MAX_CHARS - 20 ? 'gz-counter-warn' : '' }, counterText),
+              ),
+            ),
+            h('div', { className: 'gz-actions gz-actions-flush' },
+              h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: action.busy !== '', onClick: onSaveScenarios }, '保存场景'),
+              h('span', { className: 'gz-saved' }, savedText),
+            ),
           ),
         )
+      }
+
+      /** One unified 「操作结果」card for every action payload. */
+      function resultCard(tone, title, children) {
+        var iconName = tone === 'success' ? 'check' : tone === 'warn' ? 'alert' : 'info'
+        return h('section', { className: 'gz-result', 'data-tone': tone },
+          h('div', { className: 'gz-result-head' },
+            h('span', { className: 'gz-result-icon' }, icon(iconName, 14)),
+            h('div', { className: 'gz-result-headings' },
+              h('span', { className: 'gz-result-kicker' }, '操作结果'),
+              h('h3', { className: 'gz-result-title' }, title),
+            ),
+          ),
+          children,
+        )
+      }
+
+      function renderProposalList(items) {
+        if (!Array.isArray(items) || items.length === 0) return null
+        return h('ul', { className: 'gz-result-list' }, items.map(function (item, index) {
+          return h('li', { className: 'gz-result-item', key: 'item-' + index },
+            item !== null && typeof item === 'object' && item.kind ? h('span', { className: 'gz-kind-chip' }, KIND_LABELS[item.kind] || String(item.kind)) : null,
+            h('span', { className: 'gz-result-item-title' }, String(item !== null && typeof item === 'object' ? item.title || item.id : item)),
+            item !== null && typeof item === 'object' && item.effect ? h('span', { className: 'gz-result-effect' }, String(item.effect)) : null,
+          )
+        }))
       }
 
       function renderResult() {
@@ -719,83 +1187,85 @@
         var payload = result.payload !== null && typeof result.payload === 'object' ? result.payload : {}
         if (result.kind === 'gaps') {
           var gapItems = Array.isArray(payload.items) ? payload.items : []
-          return h('div', { className: 'gz-result' },
-            h('h3', { className: 'gz-result-title' }, '查缺补漏：' + String(gapItems.length) + ' 条安装提案'),
-            gapItems.length === 0 && !payload.error ? h('p', { className: 'gz-hint' }, '没有匹配到缺口提案。') : null,
-            gapItems.map(function (item, index) {
-              return h('div', { className: 'gz-result-item', key: 'gap-' + index },
-                h('span', {}, String(item.title || item.id)),
-                h('span', { className: 'gz-result-meta' }, String(item.effect || '')),
-              )
-            }),
-            renderWarnings(payload.warnings),
-            payload.error ? h('p', { className: 'gz-status-warn' }, '目录错误：' + String(payload.error)) : null,
-            payload.stale === true ? h('p', { className: 'gz-status-warn' }, '目录刷新失败，当前使用过期缓存的结果') : null,
-          )
+          var gapChildren = []
+          if (gapItems.length === 0 && !payload.error) gapChildren.push(h('p', { className: 'gz-hint' }, '没有匹配到缺口提案。'))
+          gapChildren.push(renderProposalList(gapItems))
+          gapChildren.push(renderWarningDetails(payload.warnings, '警告'))
+          if (payload.error) {
+            gapChildren.push(h('p', { className: 'gz-result-err' }, icon('alert', 13), h('span', {}, '目录错误：' + String(payload.error))))
+          }
+          if (payload.stale === true) {
+            gapChildren.push(h('p', { className: 'gz-status-warn' }, '目录刷新失败，当前使用过期缓存的结果'))
+          }
+          return resultCard(payload.error ? 'warn' : 'info', '查缺补漏：' + String(gapItems.length) + ' 条安装提案', gapChildren)
         }
         if (result.kind === 'pack') {
           var pack = payload.pack !== null && typeof payload.pack === 'object' ? payload.pack : {}
-          return h('div', { className: 'gz-result' },
-            h('h3', { className: 'gz-result-title' }, '已生成能力包提案（等待预览/应用）'),
+          return resultCard('info', '已生成能力包提案（等待预览/应用）', [
             h('p', { className: 'gz-result-meta' },
               'id ' + String(pack.id || '') +
               '；工具 ' + String(Array.isArray(pack.tools) ? pack.tools.length : 0) + ' 个' +
               '；技能 ' + String(Array.isArray(pack.skills) ? pack.skills.length : 0) + ' 个' +
               '；阶段 ' + String(Array.isArray(pack.stageIds) ? pack.stageIds.length : 0) + ' 个'),
             h('p', { className: 'gz-hint' }, '应用成功后写入 packs/<id>.json（先快照、可回滚）；v1 只导出声明文件，不安装任何插件、不改 profile。'),
-          )
+          ])
         }
         if (result.kind === 'preview') {
           var previewItems = Array.isArray(payload.items) ? payload.items : []
-          return h('div', { className: 'gz-result' },
-            h('h3', { className: 'gz-result-title' }, '预览：将应用 ' + String(previewItems.length) + ' 条'),
-            h('p', { className: 'gz-result-meta' }, 'hash：' + String(payload.hash || '').slice(0, 16) + '…'),
-            previewItems.map(function (item, index) {
-              return h('div', { className: 'gz-result-item', key: 'preview-' + index },
-                h('span', {}, String(item.title || item.id)),
-                h('span', { className: 'gz-result-meta' }, String(item.kind || '') + ' · ' + String(item.effect || '')),
-              )
-            }),
+          return resultCard('info', '预览：将应用 ' + String(previewItems.length) + ' 条', [
+            h('p', { className: 'gz-result-meta' }, 'hash：', h('code', { className: 'gz-hash' }, String(payload.hash || '').slice(0, 16) + '…')),
+            renderProposalList(previewItems),
             h('p', { className: 'gz-hint' }, '点「应用」会按这批条目执行；应用前会先建快照。'),
-          )
+          ])
         }
         if (result.kind === 'apply') {
           var applied = Array.isArray(payload.applied) ? payload.applied : []
-          return h('div', { className: 'gz-result' },
-            h('h3', { className: 'gz-result-title' }, '已应用 ' + String(applied.length) + ' 条'),
-            typeof payload.snapshotId === 'string' && payload.snapshotId !== '' ? h('p', { className: 'gz-result-meta' }, '快照 id（已填入回滚框）：' + payload.snapshotId) : null,
-            renderWarnings(payload.warnings),
-          )
+          var applyChildren = [h('p', { className: 'gz-result-ok' }, icon('check', 13), h('span', {}, '已应用 ' + String(applied.length) + ' 条'))]
+          if (typeof payload.snapshotId === 'string' && payload.snapshotId !== '') {
+            applyChildren.push(h('p', { className: 'gz-result-meta' }, '快照 id（已填入回滚框）：', h('code', { className: 'gz-hash' }, payload.snapshotId)))
+          }
+          applyChildren.push(renderWarningDetails(payload.warnings, '警告'))
+          return resultCard('success', '已应用 ' + String(applied.length) + ' 条', applyChildren)
         }
         if (result.kind === 'rollback') {
-          return h('div', { className: 'gz-result' },
-            h('h3', { className: 'gz-result-title' }, '已回滚'),
-            h('p', { className: 'gz-result-meta' }, 'restored: ' + String(payload.restored === true)),
-          )
+          return resultCard('success', '已回滚', [
+            h('p', { className: 'gz-result-ok' }, icon('check', 13), h('span', {}, '快照已恢复（restored: ' + String(payload.restored === true) + '）')),
+          ])
         }
         if (result.kind === 'draft') {
-          return h('div', { className: 'gz-result' },
-            h('h3', { className: 'gz-result-title' }, '派单草稿（面板不会代发）'),
-            h('textarea', { className: 'gz-input gz-draft', readOnly: true, value: typeof payload.text === 'string' ? payload.text : draftText }),
+          return resultCard('info', '派单草稿（面板不会代发）', [
+            h('textarea', { className: 'gz-input gz-draft', readOnly: true, value: typeof payload.text === 'string' ? payload.text : draftText, 'aria-label': '派单草稿文本' }),
             h('div', { className: 'gz-actions gz-actions-flush' },
               h('button', { type: 'button', className: 'gz-btn', onClick: onCopyDraft }, '复制到剪贴板'),
-              h('span', { className: 'gz-hint' }, copyHint),
+              h('span', { className: 'gz-saved' }, copyHint),
             ),
-          )
+          ])
         }
         return null
       }
 
       function renderMapActions() {
         var busy = action.busy !== ''
-        return h('div', { className: 'gz-actions' },
-          h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onGaps }, '查缺补漏'),
-          h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPack }, '生成工具包'),
-          h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPreview }, '预览变更'),
-          h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: busy, onClick: onApply }, '应用'),
-          h('input', { className: 'gz-input gz-input-inline', placeholder: '快照 id', value: snapshotId, onChange: onSnapshotChange, 'aria-label': '快照 id' }),
-          h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onRollback }, '回滚'),
-          h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onDraft }, '生成派单草稿'),
+        return h('div', { className: 'gz-actionbar', role: 'group', 'aria-label': '地图操作' },
+          h('div', { className: 'gz-actionbar-main' },
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onGaps }, '查缺补漏'),
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPack }, '生成工具包'),
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPreview }, '预览变更'),
+            h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: busy, onClick: onApply }, '应用'),
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onDraft }, '生成派单草稿'),
+          ),
+          h('div', { className: 'gz-actionbar-snap' },
+            h('label', { className: 'gz-snap-label', htmlFor: 'gz-snapshot' }, '快照 id'),
+            h('input', {
+              id: 'gz-snapshot',
+              className: 'gz-input gz-input-inline',
+              placeholder: '快照 id（应用后自动填入）',
+              value: snapshotId,
+              onChange: onSnapshotChange,
+              'aria-label': '快照 id',
+            }),
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onRollback }, '回滚'),
+          ),
         )
       }
 
@@ -811,78 +1281,91 @@
         var body
         if (stages.length === 0) {
           body = h('div', { className: 'gz-empty' },
-            h('p', {}, '还没有工作流地图。'),
+            h('span', { className: 'gz-empty-icon' }, icon('box', 20)),
+            h('p', {}, h('strong', {}, '还没有工作流地图。')),
             h('p', {}, 'v1 的拆解由会话里的 agent 完成：让它调用 stow_map_save 保存阶段与能力点；面板负责展示、查缺、打包、预览与应用。'),
           )
         } else {
-          body = h('div', { className: 'gz-stages' }, stages.map(function (stage) {
+          body = h('ol', { className: 'gz-timeline' }, stages.map(function (stage, stageIndex) {
             var capabilities = stage !== null && typeof stage === 'object' && Array.isArray(stage.capabilities) ? stage.capabilities : []
-            return h('section', { className: 'gz-stage', key: 'stage-' + String(stage.id) },
-              h('h3', { className: 'gz-stage-title' }, String(stage.title || stage.id), h('span', { className: 'gz-stage-id' }, String(stage.id))),
-              capabilities.length === 0
-                ? h('p', { className: 'gz-stage-empty' }, '这个阶段还没有能力点')
-                : h('div', { className: 'gz-caps' }, capabilities.map(function (capability, index) {
-                    var capId = capability !== null && capability !== undefined && capability.id !== undefined ? String(capability.id) : String(index)
-                    var openKey = String(stage.id) + '::' + capId
-                    var open = expandedCap === openKey
-                    return h('div', { className: 'gz-cap-block', key: 'cap-' + capId },
-                      h('button', {
-                        type: 'button',
-                        className: 'gz-cap gz-cap-' + String(capability !== null && capability !== undefined ? capability.status || '' : ''),
-                        'aria-expanded': open ? 'true' : 'false',
-                        onClick: function () {
-                          setExpandedCap(open ? '' : openKey)
+            return h('li', { className: 'gz-stage', key: 'stage-' + String(stage.id) },
+              h('span', { className: 'gz-stage-marker', 'aria-hidden': 'true' },
+                h('span', { className: 'gz-stage-num' }, String(stageIndex + 1)),
+              ),
+              h('div', { className: 'gz-stage-body' },
+                h('div', { className: 'gz-stage-head' },
+                  h('h3', { className: 'gz-stage-title' }, String(stage.title || stage.id)),
+                  h('span', { className: 'gz-stage-id' }, String(stage.id)),
+                  h('span', { className: 'gz-stage-count' }, String(capabilities.length) + ' 个能力点'),
+                ),
+                capabilities.length === 0
+                  ? h('p', { className: 'gz-stage-empty' }, '这个阶段还没有能力点')
+                  : h('div', { className: 'gz-caps' }, capabilities.map(function (capability, capabilityIndex) {
+                      var capId = capability !== null && capability !== undefined && capability.id !== undefined ? String(capability.id) : String(capabilityIndex)
+                      var openKey = String(stage.id) + '::' + capId
+                      var open = expandedCap === openKey
+                      var rawStatus = capability !== null && capability !== undefined ? capability.status : ''
+                      var knownStatus = rawStatus === 'have' || rawStatus === 'missing' || rawStatus === 'redundant'
+                      var statusText = knownStatus ? statusLabel(rawStatus) : '未标注'
+                      var statusIcon = rawStatus === 'have' ? 'check' : rawStatus === 'missing' ? 'alert' : 'dot'
+                      var pairs = evidencePairs(capability !== null && capability !== undefined ? capability.evidence : null)
+                      return h('div', { className: 'gz-cap-block', key: 'cap-' + capId },
+                        h('button', {
+                          type: 'button',
+                          className: 'gz-cap gz-cap-' + (knownStatus ? rawStatus : 'unknown'),
+                          'aria-expanded': open ? 'true' : 'false',
+                          onClick: function () {
+                            setExpandedCap(open ? '' : openKey)
+                          },
                         },
-                      },
-                        h('span', { className: 'gz-cap-dot' }),
-                        h('span', { className: 'gz-cap-title' }, String((capability !== null && capability !== undefined && capability.title) || capId)),
-                        h('span', { className: 'gz-cap-status' }, statusLabel(capability !== null && capability !== undefined ? capability.status : '')),
-                      ),
-                      open
-                        ? h('div', { className: 'gz-evidence' }, evidenceLines(capability !== null && capability !== undefined ? capability.evidence : null).map(function (line, lineIndex) {
-                            return h('div', { className: 'gz-evidence-line', key: 'ev-' + lineIndex }, line)
-                          }))
-                        : null,
-                    )
-                  })),
+                          h('span', { className: 'gz-cap-icon' }, icon(statusIcon, 12)),
+                          h('span', { className: 'gz-cap-title' }, String((capability !== null && capability !== undefined && capability.title) || capId)),
+                          h('span', { className: 'gz-cap-status' }, statusText),
+                          h('span', { className: 'gz-cap-chevron' }, icon('chevron', 12)),
+                        ),
+                        open
+                          ? h('div', { className: 'gz-evidence' },
+                              pairs.length === 0
+                                ? h('p', { className: 'gz-evidence-empty' }, '（无证据字段）')
+                                : h('dl', { className: 'gz-evidence-grid' }, pairs.map(function (pair, pairIndex) {
+                                    return h('div', { className: 'gz-evidence-row', key: 'ev-' + pairIndex },
+                                      h('dt', { className: 'gz-evidence-key' }, pair.label),
+                                      h('dd', { className: 'gz-evidence-val' }, pair.value),
+                                    )
+                                  })),
+                            )
+                          : null,
+                      )
+                    })),
+              ),
             )
           }))
         }
-        return h('div', { className: 'gz-section' },
-          h('h2', { className: 'gz-section-title' }, '工作流地图'),
-          h('p', { className: 'gz-map-meta' }, meta),
-          body,
-          renderResult(),
-          renderMapActions(),
+        return h('section', panelProps('map'),
+          h('div', { className: 'gz-section' },
+            h('div', { className: 'gz-section-head' },
+              h('h2', { className: 'gz-section-title' }, '工作流地图'),
+              h('span', { className: 'gz-meta' }, String(stages.length) + ' 个阶段'),
+            ),
+            h('p', { className: 'gz-map-meta' }, meta),
+            body,
+            renderResult(),
+            renderMapActions(),
+          ),
         )
       }
 
       function renderBody() {
+        if (data === null && view.loading) return renderSkeleton()
         if (tab === 'scenarios') return renderScenarios()
         if (tab === 'map') return renderMap()
         return renderClean()
       }
 
       return h('div', { className: 'gz-root', 'data-dsh-plugin': 'guizhi' },
-        h('header', { className: 'gz-head' },
-          h('div', { className: 'gz-title-row' },
-            h('h1', { className: 'gz-title' }, '归置'),
-            h('span', { className: 'gz-version' }, '版本 ' + PLUGIN_VERSION),
-          ),
-          h('p', { className: 'gz-sub' }, '把本机 DSH 的插件、工具、技能、场景与缺口整理清楚。面板只读扫描 + 写本机状态，不改 profile、不代发。'),
-          h('nav', { className: 'gz-tabs', 'aria-label': '归置三屏' }, TABS.map(function (item) {
-            return h('button', {
-              key: item.id,
-              type: 'button',
-              className: 'gz-tab' + (tab === item.id ? ' gz-tab-on' : ''),
-              'aria-pressed': tab === item.id ? 'true' : 'false',
-              onClick: function () {
-                setTab(item.id)
-              },
-            }, item.title)
-          })),
-        ),
-        h('div', { className: 'gz-body' }, renderStateWarnings(), renderBody()),
+        renderHeader(),
+        renderTabs(),
+        h('div', { className: 'gz-body' }, renderStateWarnings(), renderErrorBanner(), renderBody()),
         renderStatusBar(),
       )
     }
