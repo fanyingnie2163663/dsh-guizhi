@@ -10,7 +10,7 @@
  */
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { attributeTools, withAttribution } from '../lib/attribution.js'
@@ -425,15 +425,252 @@ test('样例/测试数据里的 name: 字段不算注册：必须有工具定义
   assert.deepEqual(warnings, [])
 })
 
-test('getter 形态的 description 也算工具定义证据（真实 ego-browser 形态）', async () => {
+test('本地注册封装别名（reg(t({...}))) 的真实注册仍归因', async () => {
   const profilePath = await makeProfile()
-  await installPlugin(profilePath, 'getter-plugin', {
-    'lib/index.js': 'reg(t({ name: "getter_tool", get description() { return "d" }, parameters: {} }))\n',
+  await installPlugin(profilePath, 'alias-plugin', {
+    'lib/index.js': [
+      'function defineToolWrapper(opts) { return defineTool(opts) }',
+      'const t = (opts) => { return defineToolWrapper({ ...opts, extra: 1 }) }',
+      'const reg = (def) => ctx.tools.register(def)',
+      "reg(t({ name: 'aliased_tool', description: 'd', parameters: {} }))",
+    ].join('\n'),
   })
-  const { rows } = await attributeTools({
-    tools: [tool('getter_tool')],
-    plugins: [{ name: 'getter-plugin', source: 'npm' }],
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('aliased_tool')],
+    plugins: [{ name: 'alias-plugin', source: 'npm' }],
     profilePath,
   })
-  assert.deepEqual(ownersOf(rows, 'getter_tool'), ['getter-plugin'])
+  assert.deepEqual(ownersOf(rows, 'aliased_tool'), ['alias-plugin'], JSON.stringify(warnings))
+})
+
+test('只有 helper 对象 + getter description、无 defineTool/register 证据：不归因（ego_space_* 类收紧）', async () => {
+  const profilePath = await makeProfile()
+  await installPlugin(profilePath, 'helper-only-plugin', {
+    'lib/index.js': 'reg(t({ name: "helper_tool", get description() { return "d" }, parameters: {} }))\n',
+  })
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('helper_tool')],
+    plugins: [{ name: 'helper-only-plugin', source: 'npm' }],
+    profilePath,
+  })
+  assert.deepEqual(ownersOf(rows, 'helper_tool'), [])
+  assert.ok(warnings.some((message) => message.includes('无法归因')), JSON.stringify(warnings))
+})
+
+test('普通对象带 name/description/execute 定义键、但无注册调用：不得单独成证据', async () => {
+  const profilePath = await makeProfile()
+  await installPlugin(profilePath, 'object-only-plugin', {
+    'lib/data.js': "const sample = { name: 'object_only_tool', description: 'fake', execute: () => {} }\n",
+  })
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('object_only_tool')],
+    plugins: [{ name: 'object-only-plugin', source: 'npm' }],
+    profilePath,
+  })
+  assert.deepEqual(ownersOf(rows, 'object_only_tool'), [])
+  assert.ok(warnings.some((message) => message.includes('无法归因')), JSON.stringify(warnings))
+})
+
+test('超大 package.json 先 stat 再读：不读入，仍给出同一上限 warning', async () => {
+  const profilePath = await makeProfile()
+  const padding = 'x'.repeat(1_100_000)
+  await installPlugin(profilePath, 'huge-manifest-plugin', {
+    'package.json': '{"name":"huge-manifest-plugin","padding":"' + padding + '"}',
+    'lib/index.js': 'ctx.tools.register(defineTool({ name: "hidden_tool", description: "x" }))\n',
+  })
+  const reads = []
+  const io = {
+    readFile: async (file, encoding) => {
+      reads.push(file)
+      return readFile(file, encoding)
+    },
+  }
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('hidden_tool')],
+    plugins: [{ name: 'huge-manifest-plugin', source: 'npm' }],
+    profilePath,
+    io,
+  })
+  assert.equal(reads.some((file) => file.endsWith('package.json')), false, '超大 package.json 不得先读入')
+  assert.deepEqual(ownersOf(rows, 'hidden_tool'), [])
+  assert.ok(warnings.some((message) => message.includes('上限') || message.includes('截断')), JSON.stringify(warnings))
+})
+
+test('排除测试/fixture 路径：test/、__tests__/、fixtures/、*.test.* 内的注册不算', async () => {
+  const profilePath = await makeProfile()
+  const registration = (name) => 'ctx.tools.register(defineTool({ name: "' + name + '", description: "x" }))\n'
+  await installPlugin(profilePath, 'paths-plugin', {
+    'lib/index.js': registration('real_tool'),
+    'test/register.js': registration('test_tool'),
+    '__tests__/register.js': registration('underscore_test_tool'),
+    'fixtures/mock.js': registration('fixture_tool'),
+    'lib/foo.test.js': registration('dot_test_tool'),
+    'lib/bar.spec.mjs': registration('spec_tool'),
+  })
+  const tools = ['real_tool', 'test_tool', 'underscore_test_tool', 'fixture_tool', 'dot_test_tool', 'spec_tool'].map((name) => tool(name))
+  const { rows, warnings } = await attributeTools({
+    tools,
+    plugins: [{ name: 'paths-plugin', source: 'npm' }],
+    profilePath,
+  })
+  assert.deepEqual(ownersOf(rows, 'real_tool'), ['paths-plugin'])
+  for (const name of ['test_tool', 'underscore_test_tool', 'fixture_tool', 'dot_test_tool', 'spec_tool']) {
+    assert.deepEqual(ownersOf(rows, name), [], name + ' 位于测试/fixture 路径，不得归因')
+  }
+  assert.ok(warnings.some((message) => message.includes('无法归因')), JSON.stringify(warnings))
+})
+
+test('恰好 200 个文件（199 源文件 + manifest）不误报截断', async () => {
+  const profilePath = await makeProfile()
+  const files = {}
+  for (let index = 0; index < 198; index += 1) files['file-' + String(index).padStart(3, '0') + '.js'] = '// filler ' + index + '\n'
+  files['zzz-boundary.js'] = 'ctx.tools.register(defineTool({ name: "boundary_tool", description: "x" }))\n'
+  await installPlugin(profilePath, 'boundary-plugin', files)
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('boundary_tool')],
+    plugins: [{ name: 'boundary-plugin', source: 'npm' }],
+    profilePath,
+  })
+  assert.deepEqual(ownersOf(rows, 'boundary_tool'), ['boundary-plugin'])
+  assert.deepEqual(warnings, [], '恰好 200 个文件不得误报截断：' + JSON.stringify(warnings))
+})
+
+test('目录条目安全上限使用单独文案，不复用「200 个文件 / 1MB」', async () => {
+  const profilePath = await makeProfile()
+  await installPlugin(profilePath, 'walk-limit-plugin', {
+    'lib/index.js': 'ctx.tools.register(defineTool({ name: "walk_tool", description: "x" }))\n',
+  })
+  const root = join(profilePath, 'node_modules', 'walk-limit-plugin')
+  const fakeDir = (name) => ({ name, isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false })
+  const io = {
+    readdir: async (dir) => (dir === root ? Array.from({ length: 5001 }, (_, index) => fakeDir('d' + String(index).padStart(4, '0'))) : []),
+  }
+  const { warnings } = await attributeTools({
+    tools: [tool('walk_tool')],
+    plugins: [{ name: 'walk-limit-plugin', source: 'npm' }],
+    profilePath,
+    io,
+  })
+  assert.ok(warnings.some((message) => message.includes('安全上限')), JSON.stringify(warnings))
+  assert.equal(warnings.some((message) => message.includes('200 个文件 / 1MB')), false, '目录条目上限不得复用文件/字节上限文案')
+})
+
+test('扩展名白名单：.ts 内注册不得命中', async () => {
+  const profilePath = await makeProfile()
+  await installPlugin(profilePath, 'ts-plugin', {
+    'lib/register.ts': 'ctx.tools.register(defineTool({ name: "ts_tool", description: "x" }))\n',
+  })
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('ts_tool')],
+    plugins: [{ name: 'ts-plugin', source: 'npm' }],
+    profilePath,
+  })
+  assert.deepEqual(ownersOf(rows, 'ts_tool'), [])
+  assert.ok(warnings.some((message) => message.includes('无法归因')), JSON.stringify(warnings))
+})
+
+test('symlink：嵌套条目跳过；插件根目录 symlink 跟随（pnpm 豁免）', async (t) => {
+  const profilePath = await makeProfile()
+  const registration = (name) => 'ctx.tools.register(defineTool({ name: "' + name + '", description: "x" }))\n'
+  const pluginRoot = await installPlugin(profilePath, 'symlink-plugin', { 'lib/index.js': registration('own_tool') })
+  const outside = join(profilePath, 'outside-registrations')
+  await mkdir(outside, { recursive: true })
+  await writeFile(join(outside, 'linked.js'), registration('linked_tool'))
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+  try {
+    await symlink(outside, join(pluginRoot, 'linked'), linkType)
+  } catch (error) {
+    t.skip('当前平台/权限不支持创建符号链接，跳过 symlink 用例：' + String(error?.code ?? error))
+    return
+  }
+  const realRoot = join(profilePath, 'real-root')
+  await mkdir(join(realRoot, 'lib'), { recursive: true })
+  await writeFile(join(realRoot, 'package.json'), JSON.stringify({ name: 'root-link-plugin', version: '1.0.0' }))
+  await writeFile(join(realRoot, 'lib', 'index.js'), registration('root_link_tool'))
+  try {
+    await symlink(realRoot, join(profilePath, 'node_modules', 'root-link-plugin'), linkType)
+  } catch (error) {
+    t.skip('当前平台/权限不支持创建插件根符号链接，跳过根 symlink 用例：' + String(error?.code ?? error))
+    return
+  }
+  const { rows } = await attributeTools({
+    tools: [tool('own_tool'), tool('linked_tool'), tool('root_link_tool')],
+    plugins: [
+      { name: 'symlink-plugin', source: 'npm' },
+      { name: 'root-link-plugin', source: 'npm' },
+    ],
+    profilePath,
+  })
+  assert.deepEqual(ownersOf(rows, 'own_tool'), ['symlink-plugin'])
+  assert.deepEqual(ownersOf(rows, 'linked_tool'), [], '嵌套 symlink 条目必须跳过')
+  assert.deepEqual(ownersOf(rows, 'root_link_tool'), ['root-link-plugin'], '插件根目录 symlink 必须跟随（pnpm 豁免）')
+})
+
+test('非法插件名/路径穿越被拒绝，不读盘不抛', async () => {
+  const profilePath = await makeProfile()
+  await installPlugin(profilePath, 'good-plugin', { 'lib/index.js': '// none\n' })
+  const reads = []
+  const io = {
+    readFile: async (file, encoding) => {
+      reads.push(file)
+      return readFile(file, encoding)
+    },
+  }
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('safe_tool')],
+    plugins: [
+      { name: '../evil', source: 'npm' },
+      { name: 'a/b/c', source: 'npm' },
+      { name: 'C:/abs/path', source: 'npm' },
+      { name: '@bad', source: 'npm' },
+    ],
+    profilePath,
+    io,
+  })
+  assert.deepEqual(rows, [{ name: 'safe_tool', description: 'safe_tool 工具' }])
+  assert.ok(warnings.filter((message) => message.includes('非法插件名')).length >= 1, JSON.stringify(warnings))
+  assert.deepEqual(reads, [], '非法插件名不得触发任何文件读取')
+})
+
+test('单文件读失败聚合 warning，其他文件照常归因', async () => {
+  const profilePath = await makeProfile()
+  await installPlugin(profilePath, 'read-failure-plugin', {
+    'lib/index.js': 'ctx.tools.register(defineTool({ name: "ok_tool", description: "x" }))\n',
+    'lib/broken.js': 'ctx.tools.register(defineTool({ name: "bad_tool", description: "x" }))\n',
+  })
+  const io = {
+    readFile: async (file, encoding) => {
+      if (file.endsWith('broken.js')) throw new Error('EACCES: simulated read failure')
+      return readFile(file, encoding)
+    },
+  }
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('ok_tool'), tool('bad_tool')],
+    plugins: [{ name: 'read-failure-plugin', source: 'npm' }],
+    profilePath,
+    io,
+  })
+  assert.deepEqual(ownersOf(rows, 'ok_tool'), ['read-failure-plugin'])
+  assert.deepEqual(ownersOf(rows, 'bad_tool'), [])
+  const failure = warnings.filter((message) => message.includes('文件失败'))
+  assert.equal(failure.length, 1, '读失败必须聚合成一条 warning：' + JSON.stringify(warnings))
+  assert.match(failure[0], /broken\.js/)
+})
+
+test('register( 邻近但非注册实参的引号工具名不得归因', async () => {
+  const profilePath = await makeProfile()
+  await installPlugin(profilePath, 'theme-plugin', {
+    'lib/theme.js': [
+      'const themeRegistry = { register(value) { return value } }',
+      "themeRegistry.register('dark')",
+      "const label = 'theme_tool'",
+    ].join('\n'),
+  })
+  const { rows, warnings } = await attributeTools({
+    tools: [tool('theme_tool')],
+    plugins: [{ name: 'theme-plugin', source: 'npm' }],
+    profilePath,
+  })
+  assert.deepEqual(ownersOf(rows, 'theme_tool'), [])
+  assert.ok(warnings.some((message) => message.includes('无法归因')), JSON.stringify(warnings))
 })
