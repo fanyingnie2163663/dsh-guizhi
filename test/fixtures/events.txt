@@ -1,0 +1,10 @@
+{"tool":"read","at":"2026-11-20T10:00:00.000Z","sessionId":"s1"}
+{"tool":"read","at":"2026-11-21T10:00:00.000Z","sessionId":"s2"}
+{"tool":"write","at":"2026-11-25T09:30:00.000Z","sessionId":"s2"}
+{"tool":"run_code","at":"2026-10-27T08:00:00.000Z","sessionId":"s1"}
+{"tool":"old_tool","at":"2026-10-01T00:00:00.000Z","sessionId":"s1"}
+{"tool":"just_outside","at":"2026-10-27T07:59:59.999Z","sessionId":"s1"}
+{"tool":"future_tool","at":"2026-12-25T00:00:00.000Z","sessionId":"s3"}
+this line is not JSON at all
+{"tool":"","at":"2026-11-20T10:00:00.000Z","sessionId":"s1"}
+{"tool":"read","at":"last tuesday","sessionId":"s1"}
