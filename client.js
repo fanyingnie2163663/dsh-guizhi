@@ -244,17 +244,22 @@
     return String(error)
   }
 
-  /** 30-day usage: null means UNKNOWN and must never read as 0 (D12). */
+  /**
+   * 30-day usage: null/undefined means UNKNOWN and must never read as 0 (D12).
+   * The loose null check is intentional (fix round 1): both null and undefined
+   * are "unknown", so every caller uses one rule.
+   */
   function usageText(tool) {
     if (tool === null || typeof tool !== 'object') return '未知'
-    return tool.used30d === null || tool.used30d === undefined ? '未知' : String(tool.used30d)
+    return tool.used30d == null ? '未知' : String(tool.used30d) // eslint-disable-line eqeqeq
   }
 
-  /** True when every scanned tool has null usage (the scan could not know). */
+  /** True when every scanned tool has null/undefined usage (the scan could not know). */
   function usageUnknown(scan) {
     if (scan === null || typeof scan !== 'object' || !Array.isArray(scan.tools) || scan.tools.length === 0) return true
     for (var index = 0; index < scan.tools.length; index += 1) {
-      if (scan.tools[index] !== null && typeof scan.tools[index] === 'object' && scan.tools[index].used30d !== null) return false
+      var tool = scan.tools[index]
+      if (tool !== null && typeof tool === 'object' && tool.used30d != null) return false // eslint-disable-line eqeqeq
     }
     return true
   }
@@ -637,7 +642,7 @@
                   h('tbody', {}, toolRows.map(function (tool, index) {
                     var valid = tool !== null && typeof tool === 'object'
                     var name = valid && typeof tool.name === 'string' ? tool.name : '(无效行)'
-                    var unknownCell = valid && (tool.used30d === null || tool.used30d === undefined)
+                    var unknownCell = valid && tool.used30d == null // eslint-disable-line eqeqeq
                     return h('tr', { key: 'tool-' + index },
                       h('td', { className: 'gz-tool-name' }, name),
                       h('td', { className: 'gz-tool-owners' }, ownersText(valid ? tool.owners : null)),

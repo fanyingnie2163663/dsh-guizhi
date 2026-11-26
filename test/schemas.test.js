@@ -91,7 +91,7 @@ test('schemas 导出 scan/map/pack/proposals/selections 五个 { validate } 校�
   }
 })
 
-test('四个校验器对非对象输入返回失败而不是抛错', () => {
+test('五个校验器对非对象输入返回失败而不是抛错', () => {
   for (const name of ['scan', 'map', 'pack', 'proposals', 'selections']) {
     for (const value of [null, undefined, 'text', 42, [], true]) {
       const result = schemas[name].validate(value)

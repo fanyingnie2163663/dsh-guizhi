@@ -1,9 +1,16 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createHostAdapter, detectDshVersion, detectProfileName, resolveProfilePath } from '../lib/host.js'
+import {
+  createHostAdapter,
+  detectDshVersion,
+  detectProfileName,
+  resolveDataRoot,
+  resolveDshHome,
+  resolveProfilePath,
+} from '../lib/host.js'
 import { probeHost } from '../lib/probe.js'
 
 /** Temp roots removed after the suite. */
@@ -339,3 +346,40 @@ test('profileContext 缺失：profilePath 走 env DSH_PROFILE / argv --profile �
   assert.equal(detectProfileName(['node', 'dsh', '--profile', '--other']), '')
   assert.equal(detectProfileName(undefined), '')
 })
+// ---------------------------------------------------------------------------
+// Data root resolution (fix round 1, R-7A Important 5 / D16 revision)
+// ---------------------------------------------------------------------------
+
+test('resolveDshHome：显式 home > $DSH_HOME > ~/.dsh 默认（与 profile 解析一致）', () => {
+  assert.equal(resolveDshHome({ home: 'F:/explicit-home', env: { DSH_HOME: 'F:/env-home' } }), 'F:/explicit-home')
+  assert.equal(resolveDshHome({ env: { DSH_HOME: 'F:/env-home' } }), 'F:/env-home')
+  assert.equal(resolveDshHome({ env: {} }), join(homedir(), '.dsh'))
+  assert.equal(resolveDshHome({ env: { DSH_HOME: '   ' } }), join(homedir(), '.dsh'))
+})
+
+test('resolveDataRoot：dshHomePath(guizhi) > profileContext.home > $DSH_HOME > ~/.dsh/guizhi', async () => {
+  const viaService = resolveDataRoot(fakeCtx({ dshHomePath: (segment) => join('F:/host-home', segment) }), { env: {} })
+  assert.equal(viaService, join('F:/host-home', 'guizhi'))
+
+  const viaProfile = resolveDataRoot(
+    fakeCtx({ profileContext: { home: 'F:/profile-home' } }),
+    { env: { DSH_HOME: 'F:/env-home' } },
+  )
+  assert.equal(viaProfile, join('F:/profile-home', 'guizhi'))
+
+  const viaEnv = resolveDataRoot(fakeCtx({}), { env: { DSH_HOME: 'F:/env-home' } })
+  assert.equal(viaEnv, join('F:/env-home', 'guizhi'))
+
+  const fallback = resolveDataRoot(fakeCtx({}), { env: {} })
+  assert.equal(fallback, join(homedir(), '.dsh', 'guizhi'))
+
+  const throwing = resolveDataRoot(
+    fakeCtx({ dshHomePath: () => { throw new Error('boom') }, profileContext: { home: 'F:/profile-home' } }),
+    { env: {} },
+  )
+  assert.equal(throwing, join('F:/profile-home', 'guizhi'), 'dshHomePath 抛错时降级到 profileContext.home')
+
+  const blank = resolveDataRoot(fakeCtx({ dshHomePath: () => '   ' }), { env: { DSH_HOME: 'F:/env-home' } })
+  assert.equal(blank, join('F:/env-home', 'guizhi'), '空路径结果降级到下一级')
+})
+
