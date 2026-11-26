@@ -100,7 +100,7 @@
 ```bash
 dsh plugin --profile <profile> add /path/to/dsh-guizhi
 # 或发布后：
-dsh plugin --profile <profile> add @fanyingnie2163663/dsh-guizhi
+dsh plugin --profile <profile> add @fanyingnie/dsh-guizhi
 ```
 
 > 插件改动只对**下一个会话 / 重启后**生效。

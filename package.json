@@ -1,5 +1,5 @@
 {
-  "name": "@fanyingnie2163663/dsh-guizhi",
+  "name": "@fanyingnie/dsh-guizhi",
   "version": "0.1.0",
   "description": "归置（Stow）：按你的工作流归置 DSH 插件、工具与技能，生成可导出能力包",
   "license": "MIT",
