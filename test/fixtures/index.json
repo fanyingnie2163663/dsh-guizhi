@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "generatedAt": "2026-11-26T00:00:00.000Z",
+  "plugins": [
+    {
+      "name": "dsh-web-search",
+      "title": "联网搜索",
+      "description": "为 agent 提供联网搜索与网页抓取能力。",
+      "version": "1.2.0"
+    },
+    {
+      "name": "dsh-browser-automation",
+      "title": "浏览器自动化",
+      "description": "驱动真实浏览器完成点击、填表与截图。",
+      "version": "0.9.1"
+    },
+    {
+      "name": "dsh-office-docx",
+      "title": "Word 文档",
+      "description": "读写与校验 .docx 文件。"
+    },
+    {
+      "name": "dsh-installed-already",
+      "title": "已安装的插件",
+      "description": "本机已经安装，缺口分析不得再推荐。"
+    }
+  ]
+}
