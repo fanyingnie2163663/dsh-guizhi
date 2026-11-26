@@ -268,7 +268,7 @@ test('GET state：返回 scan/map/proposals/selections 与 warnings；缺失文�
   })
   const response = await call(makeDeps({ store }), ROUTE_PATHS.state, {})
   assert.equal(response.status, 200)
-  assert.deepEqual(Object.keys(response.json).sort(), ['dispatch', 'map', 'proposals', 'scan', 'selections', 'warnings'])
+  assert.deepEqual(Object.keys(response.json).sort(), ['dispatch', 'dispatchSupported', 'map', 'proposals', 'scan', 'selections', 'warnings'])
   assert.deepEqual(response.json.scan, sampleScan())
   assert.deepEqual(response.json.map, sampleMap())
   assert.deepEqual(response.json.proposals, sampleProposals())

@@ -70,6 +70,8 @@
   var API_BASE = 'api/guizhi/'
   /** State poll interval: the design asks for every 2-5 seconds. */
   var POLL_MS = 3000
+  /** Client root context captured at mount; only used by explicit user clicks. */
+  var panelContext = null
   /** Must match CUSTOM_MAX_CHARS in lib/scenarios.js (code points; the input
    *  maxlength below counts UTF-16 units, slightly stricter for astral chars). */
   var CUSTOM_MAX_CHARS = 200
@@ -856,6 +858,71 @@
         setCopyHint('当前环境不支持剪贴板：请手动全选下方文本复制。')
       }
 
+      /** The polled dispatch view; null when no background dispatch has ever run. */
+      function dispatchView() {
+        var value = data !== null && data !== undefined ? data.dispatch : null
+        return value !== null && typeof value === 'object' ? value : null
+      }
+
+      /** HH:MM for one ISO timestamp; '' when unusable. */
+      function dispatchClock(value) {
+        if (typeof value !== 'string' || value === '') return ''
+        var time = Date.parse(value)
+        if (Number.isNaN(time)) return ''
+        var date = new Date(time)
+        function pad(number) { return number < 10 ? '0' + String(number) : String(number) }
+        return pad(date.getHours()) + ':' + pad(date.getMinutes())
+      }
+
+      /** One readable line for the dispatch state. */
+      function dispatchLabel(dispatch) {
+        var state = dispatch !== null && typeof dispatch.state === 'string' ? dispatch.state : 'unknown'
+        var started = dispatch !== null ? dispatchClock(dispatch.startedAt) : ''
+        var finished = dispatch !== null ? dispatchClock(dispatch.finishedAt) : ''
+        var error = dispatch !== null && typeof dispatch.error === 'string' && dispatch.error !== '' ? '：' + dispatch.error : ''
+        if (state === 'running') return '后台执行中…' + (started === '' ? '' : '（开始于 ' + started + '）')
+        if (state === 'done') return '已完成' + (finished === '' ? '' : '（' + finished + '）')
+        if (state === 'timeout') return '后台执行超时' + error
+        if (state === 'lost') return '后台会话已丢失' + error
+        if (state === 'failed') return '派单失败' + error
+        return '状态未知' + error
+      }
+
+      function onDispatch() {
+        runAction('后台派单', function () {
+          return apiRequest('dispatch', { method: 'POST', body: { kind: 'map' } })
+        }, function (payload) {
+          setResult({ kind: 'dispatch', payload: payload })
+        })
+      }
+
+      /** Open the background Session only when the user explicitly clicks it. */
+      function onOpenDispatchSession(sessionId) {
+        try {
+          if (panelContext === null || panelContext === undefined || typeof panelContext.get !== 'function') return
+          var uiWorkspace = panelContext.get('uiWorkspace', false)
+          if (uiWorkspace !== undefined && uiWorkspace !== null && typeof uiWorkspace.openSession === 'function') {
+            uiWorkspace.openSession(sessionId)
+          }
+        } catch (error) {
+          console.warn('[guizhi] 打开后台会话失败：', error)
+        }
+      }
+
+      /** Dispatch status line + optional 查看后台会话 button (never auto-navigates). */
+      function renderDispatchStatus() {
+        var dispatch = dispatchView()
+        if (dispatch === null) return null
+        var children = [h('p', { className: 'gz-result-meta' }, dispatchLabel(dispatch))]
+        if (typeof dispatch.sessionId === 'string' && dispatch.sessionId !== '') {
+          children.push(h('div', { className: 'gz-actions gz-actions-flush' },
+            h('button', { type: 'button', className: 'gz-btn', onClick: function () { onOpenDispatchSession(dispatch.sessionId) } }, '查看后台会话'),
+            h('span', { className: 'gz-saved' }, '只在你点击时打开，不自动切换。'),
+          ))
+        }
+        return h('div', { className: 'gz-banner', role: 'status' }, h('div', { className: 'gz-banner-body' }, children))
+      }
+
       /** Warning list shared by the scan summary and the action results. */
       function renderWarnings(warnings) {
         if (!Array.isArray(warnings) || warnings.length === 0) return null
@@ -1274,6 +1341,14 @@
             ),
           ])
         }
+        if (result.kind === 'dispatch') {
+          var dispatchPayload = payload.dispatch !== null && typeof payload.dispatch === 'object' ? payload.dispatch : {}
+          var startedText = typeof dispatchPayload.startedAt === 'string' ? dispatchClock(dispatchPayload.startedAt) : ''
+          return resultCard('info', '已提交后台派单', [
+            h('p', { className: 'gz-result-meta' }, '后台会话：' + String(dispatchPayload.sessionId || '') + (startedText === '' ? '' : '；开始于 ' + startedText)),
+            h('p', { className: 'gz-hint' }, 'agent 会在后台会话里拆解并调用 stow_map_save；面板每 3 秒轮询，完成后地图会自动出现。'),
+          ])
+        }
         return null
       }
 
@@ -1313,10 +1388,24 @@
         }
         var body
         if (stages.length === 0) {
+          var selectedIds = selections !== null && Array.isArray(selections.selected) ? selections.selected : []
+          var dispatch = dispatchView()
+          var dispatchRunning = dispatch !== null && dispatch.state === 'running'
+          var dispatchSupported = !(data !== null && data !== undefined && data.dispatchSupported === false)
+          var dispatchDisabled = action.busy !== '' || !dispatchSupported || selectedIds.length === 0 || dispatchRunning
+          var dispatchHint = ''
+          if (!dispatchSupported) dispatchHint = '当前宿主不支持后台派单（缺少后台会话服务）。'
+          else if (selectedIds.length === 0) dispatchHint = '先在「场景」页选择并保存场景，再让 agent 拆解。'
+          else if (dispatchRunning) dispatchHint = '后台执行中…'
+          else if (dispatch !== null && (dispatch.state === 'failed' || dispatch.state === 'timeout' || dispatch.state === 'lost')) dispatchHint = '上次没有成功，可以重试。'
           body = h('div', { className: 'gz-empty' },
             h('span', { className: 'gz-empty-icon' }, icon('box', 20)),
             h('p', {}, h('strong', {}, '还没有工作流地图。')),
-            h('p', {}, 'v1 的拆解由会话里的 agent 完成：让它调用 stow_map_save 保存阶段与能力点；面板负责展示、查缺、打包、预览与应用。'),
+            h('p', {}, '点下面按钮让后台 agent 拆解并保存；不需要你新开会话，也不会打断当前对话。'),
+            h('div', { className: 'gz-actions' },
+              h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: dispatchDisabled, onClick: onDispatch }, dispatchRunning ? '后台执行中…' : (dispatch === null ? '让 Agent 后台拆解' : '重新让 Agent 后台拆解')),
+              dispatchHint === '' ? null : h('span', { className: 'gz-saved' }, dispatchHint),
+            ),
           )
         } else {
           body = h('ol', { className: 'gz-timeline' }, stages.map(function (stage, stageIndex) {
@@ -1382,6 +1471,7 @@
             ),
             h('p', { className: 'gz-map-meta' }, meta),
             body,
+            renderDispatchStatus(),
             renderResult(),
             renderMapActions(),
           ),
@@ -1420,6 +1510,7 @@
        * @returns {void}
        */
       apply(ctx) {
+        panelContext = ctx
         ensureStyle()
         if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') {
           console.warn('[guizhi] slots service missing; panel not mounted')
