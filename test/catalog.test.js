@@ -300,6 +300,19 @@ test('loadCatalog：超时 fail-open（注入永不返回的 fetchImpl）', asyn
   assert.match(result.error, /超时/)
 })
 
+test('loadCatalog：缓存写失败 → 仍返回新条目、stale:false、error 说明缓存未写入且无残留', async () => {
+  const cacheDir = await makeCacheDir()
+  await mkdir(cacheDir, { recursive: true })
+  const blocked = cacheFileFor(cacheDir, URL_INDEX)
+  await mkdir(blocked, { recursive: true }) // 占位目录：rename 到该路径必然失败
+  const result = await loadCatalog({ url: URL_INDEX, cacheDir, now: NOW, fetchImpl: countingFetch(FIXTURE) })
+  assert.deepEqual(result.entries, parseFormat1(FIXTURE).entries)
+  assert.equal(result.stale, false)
+  assert.match(result.error, /缓存写入失败/)
+  assert.deepEqual(await readdir(blocked), [], '缓存路径仍是占位目录，没有伪装成写成功')
+  assert.deepEqual((await listDir(cacheDir)).filter((name) => name.endsWith('.tmp')), [], '失败的原子写必须清理 .tmp')
+})
+
 test('matchGaps：只为 missing 能力生成，fixture 命中三条且不含已安装插件', () => {
   const catalog = parseFormat1(FIXTURE)
   assert.deepEqual(schemas.map.validate(makeMap()), { ok: true, errors: [] }, 'map fixture 必须是合法 D7 文档')
@@ -326,19 +339,46 @@ test('matchGaps：只为 missing 能力生成，fixture 命中三条且不含已
   assert.equal(joined.includes('dsh-installed-already'), false, '已装插件名不得出现在提案中')
 })
 
-test('matchGaps：标题/描述/名称都能做不区分大小写的包含匹配', () => {
+test('matchGaps：entry.name 命中（大小写不敏感，单向匹配）', () => {
+  const catalog = { entries: [{ name: 'dsh-ALPHA-plugin', title: '无关标题' }] }
+  const map = { scenarios: [], stages: [{ id: 's', title: '阶段', capabilities: [
+    { id: 'alpha', title: '甲能力', status: 'missing', evidence: {} },
+  ] }] }
+  const gaps = matchGaps({ scan: { plugins: [] }, map, catalog })
+  assert.deepEqual(gaps.map((gap) => gap.evidence.refs[0]), ['dsh-ALPHA-plugin'])
+})
+
+test('matchGaps：entry.title 命中（大小写不敏感，单向匹配）', () => {
+  const catalog = { entries: [{ name: 'plugin-one', title: 'BETA capability' }] }
+  const map = { scenarios: [], stages: [{ id: 's', title: '阶段', capabilities: [
+    { id: 'zzz-cap', title: 'beta', status: 'missing', evidence: {} },
+  ] }] }
+  const gaps = matchGaps({ scan: { plugins: [] }, map, catalog })
+  assert.deepEqual(gaps.map((gap) => gap.evidence.refs[0]), ['plugin-one'])
+})
+
+test('matchGaps：entry.description 命中（大小写不敏感，单向匹配）', () => {
+  const catalog = { entries: [{ name: 'plugin-two', title: '无关标题', description: '为 agent 提供 GAMMA 能力' }] }
+  const map = { scenarios: [], stages: [{ id: 's', title: '阶段', capabilities: [
+    { id: 'gamma', title: '丙能力', status: 'missing', evidence: {} },
+  ] }] }
+  const gaps = matchGaps({ scan: { plugins: [] }, map, catalog })
+  assert.deepEqual(gaps.map((gap) => gap.evidence.refs[0]), ['plugin-two'])
+})
+
+test('matchGaps：反向-only 不命中（capability 文本包含 entry 短文本时不推荐）', () => {
   const catalog = {
     entries: [
-      { name: 'dsh-FOO', title: '无关标题' },
-      { name: 'x-bar', title: '无关标题', description: '提供 WEB SEARCH 能力' },
+      { name: 'dsh-search', title: 'Search' },
+      { name: 'web' },
     ],
   }
   const map = { scenarios: [], stages: [{ id: 's', title: '阶段', capabilities: [
-    { id: 'bar', title: 'BAR 能力', status: 'missing', evidence: {} },
-    { id: 'web', title: '随便', status: 'missing', evidence: {} },
+    { id: 'research', title: '研究能力', status: 'missing', evidence: {} },
+    { id: 'web-tools', title: 'Web 工具链', status: 'missing', evidence: {} },
   ] }] }
   const gaps = matchGaps({ scan: { plugins: [] }, map, catalog })
-  assert.deepEqual(gaps.map((gap) => gap.evidence.refs[0]), ['x-bar', 'x-bar'])
+  assert.deepEqual(gaps, [])
 })
 
 test('matchGaps：catalog.entries 为空或缺失 → []（error 由调用方透传，不编造）', () => {
