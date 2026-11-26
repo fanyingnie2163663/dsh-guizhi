@@ -411,3 +411,40 @@ test('resolveDataRoot：dshHomePath(guizhi) > profileContext.home > $DSH_HOME > 
   assert.equal(blank, join('F:/env-home', 'guizhi'), '空路径结果降级到下一级')
 })
 
+test('dispatchSupport：缺服务时不可用且给出原因，服务齐全时可用', () => {
+  const missing = createHostAdapter(fakeCtx({}))
+  const denied = missing.dispatchSupport()
+  assert.equal(denied.available, false)
+  assert.equal(typeof denied.reason, 'string')
+  assert.match(denied.reason, /sessionController/)
+  const controller = { create: async () => ({ sessionId: 's1' }), prompt: async () => ({ accepted: true }) }
+  const ready = createHostAdapter(fakeCtx({ sessionController: controller, sessionQuery: { readSession: async () => ({ events: [] }) } }))
+  assert.equal(ready.dispatchSupport().available, true)
+})
+
+test('createDispatchSession / promptDispatchSession 使用固定的 sessionController 形状', async () => {
+  const calls = []
+  const controller = {
+    create: async (request) => { calls.push(['create', request]); return { sessionId: 's9' } },
+    prompt: async (request, signal) => { calls.push(['prompt', request, signal instanceof AbortSignal]); return { accepted: true } },
+  }
+  const adapter = createHostAdapter(fakeCtx({ sessionController: controller, sessionQuery: { readSession: async () => ({ events: [] }) } }))
+  const sessionId = await adapter.createDispatchSession()
+  assert.equal(sessionId, 's9')
+  assert.deepEqual(calls[0], ['create', {}])
+  await adapter.promptDispatchSession({ sessionId, requestId: 'r9', text: 'do it' })
+  assert.deepEqual(calls[1][1], { sessionId: 's9', requestId: 'r9', content: [{ type: 'text', text: 'do it' }], mode: 'queue' })
+  assert.equal(calls[1][2], true, 'prompt 必须收到 AbortSignal')
+})
+
+test('readDispatchEvents：返回事件数组；读取失败降级 null 且记录 warning', async () => {
+  const adapter = createHostAdapter(fakeCtx({ sessionQuery: { readSession: async () => ({ events: [{ seq: 1 }] }) } }))
+  assert.deepEqual(await adapter.readDispatchEvents('s1'), [{ seq: 1 }])
+  const failing = createHostAdapter(fakeCtx({ sessionQuery: { readSession: async () => { throw new Error('gone') } } }))
+  assert.equal(await failing.readDispatchEvents('s1'), null)
+  assert.ok(failing.warnings.some((message) => message.includes('后台会话')))
+  const missing = createHostAdapter(fakeCtx({}))
+  assert.equal(await missing.readDispatchEvents('s1'), null)
+})
+
+
