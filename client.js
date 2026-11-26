@@ -387,6 +387,19 @@
       '.gz-result-item-title{flex:1 1 auto;min-width:0;word-break:break-word}',
       '.gz-result-effect{font-size:11px;color:var(--gz-text-3);word-break:break-word}',
       '.gz-result-meta{margin:0;font-size:11.5px;line-height:1.55;color:var(--gz-text-2);word-break:break-word}',
+      '.gz-progress{display:flex;align-items:center;gap:14px;border:1px solid var(--gz-line,rgba(127,127,127,.24));border-radius:var(--gz-radius-md);padding:12px;background:rgba(127,127,127,.05)}',
+      '.gz-progress-ring{position:relative;display:flex;align-items:center;justify-content:center;width:72px;height:72px;flex:0 0 auto}',
+      '.gz-progress-ring svg{position:absolute;inset:0}',
+      '.gz-ring-track{stroke:rgba(127,127,127,.22)}',
+      '.gz-ring-value{stroke:var(--gz-accent,#6c8cff);transition:stroke-dashoffset .4s ease}',
+      '.gz-ring-num{position:relative;font-size:15px;font-weight:650;color:var(--gz-text)}',
+      '.gz-progress-body{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto}',
+      '.gz-progress-title{font-size:12.5px;font-weight:650;color:var(--gz-text)}',
+      '.gz-progress-step{margin:0;font-size:11.5px;line-height:1.5;color:var(--gz-text-2);word-break:break-word}',
+      '.gz-progress-list{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px 10px}',
+      '.gz-progress-list li{font-size:10.5px;color:var(--gz-text-3)}',
+      '.gz-progress-list li[data-state="ok"]{color:#16a34a}',
+      '.gz-progress-list li[data-state="warn"]{color:#d97706}',
       '.gz-hash{font-family:var(--gz-mono);font-size:11px;background:var(--gz-tint);border-radius:6px;padding:1px 6px;color:var(--gz-text-2);word-break:break-all}',
       '.gz-result-ok{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--gz-ok)}',
       '.gz-result-err{display:flex;align-items:flex-start;gap:6px;margin:0;font-size:11.5px;line-height:1.5;color:var(--gz-danger);word-break:break-word}',
@@ -618,6 +631,10 @@
       var result = resultHook[0]
       var setResult = resultHook[1]
 
+      var pipelineHook = useState({ status: 'idle', percent: 0, step: null, steps: [] })
+      var pipeline = pipelineHook[0]
+      var setPipeline = pipelineHook[1]
+
       var draftHook = useState('')
       var draftText = draftHook[0]
       var setDraftText = draftHook[1]
@@ -760,14 +777,31 @@
         })
       }
 
-      /** One-click chain: scan → gaps → pack → preview → apply pack proposals. */
+      /** One-click chain with live progress: poll the host pipeline status while the POST runs. */
       function onPipeline() {
-        runAction('一键整理', function () {
-          return apiRequest('pipeline', { method: 'POST', body: {} })
-        }, function (payload) {
+        if (action.busy !== '') return
+        setAction({ busy: '一键整理', message: '', error: '', warnings: [] })
+        setPipeline({ status: 'running', percent: 0, step: { id: 'scan', label: '扫描本机' }, steps: [] })
+        var pollTimer = setInterval(function () {
+          apiRequest('pipelineStatus').then(function (progress) {
+            if (progress !== null && typeof progress === 'object' && typeof progress.status === 'string' && progress.status !== 'idle') setPipeline(progress)
+          }, function () {})
+        }, 350)
+        apiRequest('pipeline', { method: 'POST', body: {} }).then(function (payload) {
+          clearInterval(pollTimer)
           var applied = payload !== null && typeof payload === 'object' && payload.apply !== null && typeof payload.apply === 'object' ? payload.apply : null
           if (applied !== null && typeof applied.snapshotId === 'string' && applied.snapshotId !== '') setSnapshotId(applied.snapshotId)
+          setPipeline({ status: 'done', percent: 100, step: null, steps: Array.isArray(payload.steps) ? payload.steps : [] })
           setResult({ kind: 'pipeline', payload: payload })
+          setAction({ busy: '', message: '一键整理完成', error: '', warnings: [] })
+          loadState()
+        }, function (error) {
+          clearInterval(pollTimer)
+          var payload = error !== null && error !== undefined ? error.payload : null
+          var warnings = payload !== null && typeof payload === 'object' && Array.isArray(payload.warnings) ? payload.warnings : []
+          var details = payload !== null && typeof payload === 'object' && Array.isArray(payload.errors) && payload.errors.length > 0 ? '（' + payload.errors.join('；') + '）' : ''
+          setPipeline({ status: 'failed', percent: 100, step: null, steps: [] })
+          setAction({ busy: '', message: '', error: errorText(error) + details, warnings: warnings })
         })
       }
 
@@ -920,6 +954,44 @@
         }
       }
 
+      /** Circular progress ring + current work item + per-step list for 一键整理. */
+      function renderPipelineProgress() {
+        if (pipeline === null || typeof pipeline !== 'object' || pipeline.status === 'idle') return null
+        var percent = typeof pipeline.percent === 'number' && isFinite(pipeline.percent) ? Math.max(0, Math.min(100, Math.round(pipeline.percent))) : 0
+        var radius = 30
+        var circumference = 2 * Math.PI * radius
+        var offset = circumference * (1 - percent / 100)
+        var state = typeof pipeline.status === 'string' ? pipeline.status : 'running'
+        var current = pipeline.step !== null && typeof pipeline.step === 'object' ? pipeline.step : null
+        var currentLabel = state === 'done' ? '全部完成' : state === 'failed' ? '执行失败' : current !== null && typeof current.label === 'string' ? current.label : '准备中'
+        var stepList = Array.isArray(pipeline.steps) ? pipeline.steps : []
+        var body = [
+          h('strong', { className: 'gz-progress-title' }, state === 'done' ? '一键整理完成' : state === 'failed' ? '一键整理失败' : '正在' + currentLabel),
+        ]
+        if (state === 'running') {
+          body.push(h('p', { className: 'gz-progress-step' }, '当前：' + currentLabel + (current !== null && typeof current.detail === 'string' && current.detail !== '' ? ' · ' + current.detail : '')))
+        } else if (state === 'failed' && typeof pipeline.error === 'string') {
+          body.push(h('p', { className: 'gz-progress-step gz-status-error' }, pipeline.error))
+        }
+        if (stepList.length > 0) {
+          body.push(h('ul', { className: 'gz-progress-list' }, stepList.map(function (step, stepIndex) {
+            var itemState = step !== null && typeof step === 'object' && typeof step.status === 'string' ? step.status : 'running'
+            var label = step !== null && typeof step === 'object' && typeof step.label === 'string' ? step.label : ''
+            var mark = itemState === 'ok' ? '✓ ' : itemState === 'warn' ? '! ' : itemState === 'skip' ? '– ' : '… '
+            return h('li', { key: 'pipeline-progress-' + stepIndex, 'data-state': itemState }, mark + label)
+          })))
+        }
+        return h('div', { className: 'gz-progress', role: 'status', 'aria-live': 'polite', 'aria-label': '一键整理进度 ' + String(percent) + '%' },
+          h('div', { className: 'gz-progress-ring' },
+            h('svg', { viewBox: '0 0 72 72', width: 72, height: 72, 'aria-hidden': 'true' },
+              h('circle', { className: 'gz-ring-track', cx: 36, cy: 36, r: radius, fill: 'none', strokeWidth: 6 }),
+              h('circle', { className: 'gz-ring-value', cx: 36, cy: 36, r: radius, fill: 'none', strokeWidth: 6, strokeLinecap: 'round', strokeDasharray: String(circumference), strokeDashoffset: String(offset), transform: 'rotate(-90 36 36)' }),
+            ),
+            h('span', { className: 'gz-ring-num' }, String(percent) + '%'),
+          ),
+          h('div', { className: 'gz-progress-body' }, body),
+        )
+      }
       /** Dispatch status line + optional 查看后台会话 button (never auto-navigates). */
       function renderDispatchStatus() {
         var dispatch = dispatchView()
@@ -1553,6 +1625,7 @@
             ),
             h('p', { className: 'gz-map-meta' }, meta),
             body,
+            renderPipelineProgress(),
             renderDispatchStatus(),
             renderResult(),
             renderMapActions(),

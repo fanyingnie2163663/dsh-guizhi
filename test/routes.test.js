@@ -250,9 +250,9 @@ function assertFailure(response, status, pattern) {
 // Route table
 // ---------------------------------------------------------------------------
 
-test('路由表：12 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATHS 一一对应', () => {
+test('路由表：13 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATHS 一一对应', () => {
   const routes = createRoutes({ deps: makeDeps() })
-  assert.equal(routes.length, 12)
+  assert.equal(routes.length, 13)
   for (const route of routes) {
     assert.ok(route.method === 'GET' || route.method === 'POST', 'method 只能是 GET/POST')
     assert.equal(typeof route.path, 'string')
@@ -261,6 +261,7 @@ test('路由表：12 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATH
   }
   assert.deepEqual(routes.map((route) => route.path).sort(), Object.values(ROUTE_PATHS).sort())
   assert.equal(routeOf(routes, ROUTE_PATHS.state).method, 'GET')
+  assert.equal(routeOf(routes, ROUTE_PATHS.pipelineStatus).method, 'GET')
   for (const key of ['scan', 'scenarios', 'map', 'pack', 'gaps', 'preview', 'apply', 'rollback', 'draft', 'dispatch', 'pipeline']) {
     assert.equal(routeOf(routes, ROUTE_PATHS[key]).method, 'POST', key + ' 必须是 POST')
   }
@@ -1239,5 +1240,40 @@ test('POST pipeline：目录不可达时 fail-open，仍生成并应用能力包
   assert.equal(response.json.apply.applied.length, 1)
   await stat(join(home, 'packs', response.json.pack.id + '.json'))
 })
+
+test('GET pipeline/status：从未运行时返回 idle', async () => {
+  const response = await call(makeDeps({ home: join(tmpdir(), 'guizhi-progress-unused') }), ROUTE_PATHS.pipelineStatus, {})
+  assert.equal(response.status, 200)
+  assert.equal(response.json.status, 'idle')
+  assert.equal(response.json.percent, 0)
+})
+
+test('GET pipeline/status：运行中报告当前步骤与百分比，完成后 100% + steps', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-progress-'))
+  cleanup.push(home)
+  const store = createFakeStore({ map: sampleMap(), scan: sampleScan() })
+  let releaseCatalog = null
+  const catalog = () => new Promise((resolve) => { releaseCatalog = resolve })
+  const deps = makeDeps({ store, home, catalog })
+  const pending = call(deps, ROUTE_PATHS.pipeline, {})
+  let running = null
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const status = await call(deps, ROUTE_PATHS.pipelineStatus, {})
+    if (status.json.status === 'running' && status.json.step !== null && status.json.step.id === 'gaps') { running = status.json; break }
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.ok(running !== null, '应在 gaps 步骤观察到 running 进度')
+  assert.ok(running.percent > 0 && running.percent < 100, '运行中百分比应在 0-100 之间：' + running.percent)
+  assert.equal(running.step.label, '查缺补漏')
+  releaseCatalog({ entries: [], stale: false, error: null })
+  const response = await pending
+  assert.equal(response.status, 200)
+  const finished = await call(deps, ROUTE_PATHS.pipelineStatus, {})
+  assert.equal(finished.json.status, 'done')
+  assert.equal(finished.json.percent, 100)
+  assert.equal(finished.json.steps.length, 5)
+  assert.equal(finished.json.steps[0].id, 'scan')
+})
+
 
 

@@ -106,5 +106,16 @@ test('client.js（一键整理）：按钮、pipeline 路由与结果摘要', as
   assert.ok(source.includes('已自动应用'))
 })
 
+test('client.js（一键整理进度）：轮询 pipelineStatus 并渲染圆环百分比', async () => {
+  const source = await readClientSource()
+  assert.ok(source.includes("apiRequest('pipelineStatus'"))
+  assert.ok(source.includes('renderPipelineProgress'))
+  assert.ok(source.includes('strokeDashoffset'))
+  assert.ok(source.includes('gz-ring-value'))
+  assert.ok(source.includes("data-state"))
+  assert.ok(source.includes('一键整理进度 '))
+})
+
+
 
 
