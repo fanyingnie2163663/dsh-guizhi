@@ -1,0 +1,75 @@
+{
+  "name": "@fanyingnie/dsh-guizhi",
+  "version": "0.1.0",
+  "description": "归置（Stow）：按你的工作流归置 DSH 插件、工具与技能，生成可导出能力包",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "guizhi",
+    "stow",
+    "capability-pack",
+    "tooling",
+    "inventory",
+    "skills"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fanyingnie2163663/dsh-guizhi.git"
+  },
+  "homepage": "https://github.com/fanyingnie2163663/dsh-guizhi#readme",
+  "bugs": {
+    "url": "https://github.com/fanyingnie2163663/dsh-guizhi/issues"
+  },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.2.2-rc.2 <0.3.0"
+  },
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": ">=0.2.2-rc.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "kind": "plugin",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    },
+    "capabilities": [
+      "fs:read",
+      "fs:write",
+      "network:ingress",
+      "sessions:read"
+    ],
+    "labels": []
+  }
+}

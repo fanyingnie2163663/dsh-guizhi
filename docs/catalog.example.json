@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "name": "guizhi-example-catalog",
+  "plugins": [
+    {
+      "name": "@example/dsh-web-research",
+      "title": "网页调研",
+      "description": "实时网页浏览与检索、页面结构与内容抽取、页面交互与表单操作",
+      "version": "0.1.0"
+    },
+    {
+      "name": "@example/dsh-visual-design",
+      "title": "视觉设计",
+      "description": "画布设计稿与可编辑稿、设计系统与品牌规范、网页视觉设计稿产出",
+      "version": "0.1.0"
+    },
+    {
+      "name": "@example/dsh-office-docs",
+      "title": "办公文档",
+      "description": "Word/PPT/Excel 办公文档生产与模板排版",
+      "version": "0.1.0"
+    },
+    {
+      "name": "@example/dsh-test-verify",
+      "title": "验证交付",
+      "description": "页面行为断言与回归检查、完成前验证与证据核对",
+      "version": "0.1.0"
+    }
+  ]
+}

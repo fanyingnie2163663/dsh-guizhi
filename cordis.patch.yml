@@ -1,0 +1,8 @@
+# Guizhi bundle patch: inserts the Host plugin row into the profile roster.
+# The client half is resolved from the `dsh.client` manifest field, so it needs
+# no row here. Do not put `inject` on this row: lib/index.js exports
+# `inject = []` and resolves every optional host service itself with
+# `ctx.inject([...], cb)` / protected `ctx.get(...)` reads (see docs/host-notes.md).
+- insert:
+    - id: guizhi
+      name: '@fanyingnie/dsh-guizhi'
