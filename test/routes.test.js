@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ROUTE_PATHS, createRoutes, registerTools } from '../lib/routes.js'
+import { ROUTE_PATHS, TOOL_SPECS, createRoutes, registerTools } from '../lib/routes.js'
 import { schemas } from '../lib/schemas.js'
 
 /**
@@ -337,6 +337,35 @@ test('POST scan（S1）：summarizeUsage 期间新增 warning → 用量强制 u
   assert.equal(store.writes.filter((write) => write.name === 'scan').length, 1)
 })
 
+test('POST scan（S1 收窄）：非会话类新增 warning 不把用量改成 unknown', async () => {
+  const host = createFakeHost({
+    onSessionEvent(index) {
+      if (index === 1) host.pushWarning('attribution 扫描较慢：仅提示，与用量读取无关')
+    },
+  })
+  const response = await call(makeDeps({ host }), ROUTE_PATHS.scan, {})
+  assert.equal(response.status, 200)
+  const read = response.json.tools.find((tool) => tool.name === 'read')
+  assert.equal(read.used30d, 2, '非会话类 warning 不应否定已知用量')
+  assert.ok(!response.json.warnings.some((message) => message.includes('会话用量未知')), '非会话类 warning 不触发 S1 降级')
+  assert.ok(response.json.warnings.some((message) => message.includes('attribution')), '告警仍要透传')
+})
+
+test('POST scan：scan.warnings 去重且保序（宿主同一 warning 重复出现只保留一次）', async () => {
+  const repeated = 'sessionQuery.readSession(session-9) 失败：boom'
+  const host = createFakeHost({
+    onSessionEvent(index) {
+      if (index === 1) host.pushWarning(repeated)
+    },
+  })
+  host.pushWarning(repeated)
+  const response = await call(makeDeps({ host }), ROUTE_PATHS.scan, {})
+  assert.equal(response.status, 200)
+  assert.equal(response.json.warnings.filter((message) => message === repeated).length, 1, '重复 warning 只保留一条')
+  assert.equal(new Set(response.json.warnings).size, response.json.warnings.length, 'scan.warnings 整体去重')
+  assert.ok(response.json.warnings.some((message) => message.includes('会话用量未知')), '会话类 warning 仍触发 S1')
+})
+
 test('POST scan：usage 源头整体不可用时 used30d 为 null 而不是 0（D12）', async () => {
   const host = createFakeHost()
   host.sessionEvents = () => null
@@ -485,7 +514,7 @@ test('POST gaps：目录加载失败 fail-open（items [] + error 字符串）�
   assert.deepEqual(written[0].value.items, [])
 })
 
-test('POST gaps：没有地图返回 400 且不写 proposals', async () => {
+test('POST gaps：没有地图返回 400 NO_MAP 且不写 proposals（D7 追加语义）', async () => {
   const store = createFakeStore({ scan: sampleScan() })
   const response = await call(
     makeDeps({ store, catalog: async () => ({ entries: [], stale: false, error: null }) }),
@@ -493,6 +522,7 @@ test('POST gaps：没有地图返回 400 且不写 proposals', async () => {
     {},
   )
   assertFailure(response, 400, /地图/)
+  assert.equal(response.json.code, 'NO_MAP')
   assert.deepEqual(store.writes, [])
 })
 
@@ -705,4 +735,97 @@ test('写盘 I/O 失败时 handler 返回 500 + 可读 error，不把异常漏�
   const response = await call(makeDeps({ store }), ROUTE_PATHS.scenarios, { selected: ['dev'] })
   assertFailure(response, 500, /disk full/)
   assert.equal(response.json.code, 'STATE_WRITE_FAILED')
+})
+
+// ---------------------------------------------------------------------------
+// Host defineTool DSL static regression (fix round 1, R-7A Critical 3)
+// ---------------------------------------------------------------------------
+
+/** Value-schema types the host defineTool DSL accepts (dsh-tools 0.2.2-rc.5). */
+const HOST_DSL_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'null', 'array', 'object', 'json'])
+
+/** @param {unknown} value */
+function isSchemaObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Walk one author value schema the same way the host compiler does and collect
+ * violations of the enforced DSL subset (dsh-tools schema.js, rc.5):
+ * - a property-level required must be exactly true (false is refused);
+ * - type object must declare an explicit boolean additionalProperties;
+ * - type must be one of the host types (or oneOf the alternative form);
+ * - required may only appear at property level.
+ * @param {unknown} value @param {string} path @param {string[]} violations @param {{ property?: boolean }} [context]
+ */
+function collectDslViolations(value, path, violations, context = {}) {
+  if (!isSchemaObject(value)) {
+    violations.push(path + ': 必须是值 schema 对象')
+    return
+  }
+  if (Object.hasOwn(value, 'required') && context.property !== true) {
+    violations.push(path + '.required: 只能出现在参数属性级')
+  }
+  if (context.property === true && Object.hasOwn(value, 'required') && value.required !== true) {
+    violations.push(path + '.required: 宿主 DSL 只允许 true，可选参数必须省略 required')
+  }
+  if (Object.hasOwn(value, 'type')) {
+    if (!HOST_DSL_TYPES.has(value.type)) {
+      violations.push(path + '.type: 宿主 DSL 不支持 ' + JSON.stringify(value.type))
+    }
+    if (value.type === 'object' && typeof value.additionalProperties !== 'boolean') {
+      violations.push(path + '.additionalProperties: type=object 必须显式 true/false')
+    }
+  } else if (!Object.hasOwn(value, 'oneOf')) {
+    violations.push(path + ': 必须声明 type 或 oneOf')
+  }
+  if (Object.hasOwn(value, 'oneOf')) {
+    if (!Array.isArray(value.oneOf) || value.oneOf.length < 2) {
+      violations.push(path + '.oneOf: 必须是至少两个分支的数组')
+    } else {
+      value.oneOf.forEach((branch, index) => collectDslViolations(branch, path + '.oneOf[' + index + ']', violations))
+    }
+  }
+  if (isSchemaObject(value.properties)) {
+    for (const [key, property] of Object.entries(value.properties)) {
+      collectDslViolations(property, path + '.properties.' + key, violations, { property: true })
+    }
+  }
+  if (Object.hasOwn(value, 'items')) {
+    collectDslViolations(value.items, path + '.items', violations)
+  }
+}
+
+test('TOOL_SPECS 参数符合宿主 defineTool DSL：required 仅 true、object 显式 additionalProperties、type 白名单', () => {
+  assert.ok(Array.isArray(TOOL_SPECS), 'TOOL_SPECS 必须导出为数组供接线与回归测试使用')
+  assert.equal(TOOL_SPECS.length, 9)
+  const violations = []
+  for (const spec of TOOL_SPECS) {
+    const parameters = spec.parameters
+    if (!isSchemaObject(parameters)) {
+      violations.push(spec.name + '.parameters: 必须是对象')
+      continue
+    }
+    for (const [name, schema] of Object.entries(parameters)) {
+      collectDslViolations(schema, spec.name + '.parameters.' + name, violations, { property: true })
+    }
+  }
+  assert.deepEqual(violations, [], '宿主 DSL 违规：' + violations.join('；'))
+})
+
+test('TOOL_SPECS 回归：stow_preview.ids 省略 required（可选）、stow_map_save.map 用 json 类型', () => {
+  const byName = new Map(TOOL_SPECS.map((spec) => [spec.name, spec]))
+  const previewIds = byName.get('stow_preview').parameters.ids
+  assert.equal(Object.hasOwn(previewIds, 'required'), false, '可选参数必须省略 required（宿主 DSL 拒绝 required:false）')
+  assert.equal(previewIds.type, 'array')
+  const mapParam = byName.get('stow_map_save').parameters.map
+  assert.equal(mapParam.type, 'json', 'map 是任意 JSON 文档，用宿主 DSL 的 json 类型；结构由 schemas.map 兜底')
+  assert.equal(mapParam.required, true)
+  assert.equal(typeof mapParam.description, 'string')
+  assert.ok(mapParam.description.length > 0)
+})
+
+test('TOOL_SPECS 仍能经 registerTools 注册出 9 个工具（DSL 修复不改变工具面）', () => {
+  const tools = registerTools({ deps: makeDeps() })
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), EXPECTED_TOOL_NAMES.slice().sort())
 })
