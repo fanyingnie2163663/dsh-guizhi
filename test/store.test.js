@@ -234,3 +234,15 @@ test('createStore 参数校验：home 必须是非空字符串', () => {
   assert.equal(typeof store.restore, 'function')
   assert.equal(typeof store.listSnapshots, 'function')
 })
+
+test('dispatch 是合法状态文档，快照会复制它', async () => {
+  const { home, store } = await makeStore()
+  await store.write('dispatch', { state: 'running', sessionId: 's1' })
+  const read = await store.read('dispatch')
+  assert.equal(read.error, null)
+  assert.equal(read.value.state, 'running')
+  const snapshot = await store.snapshot('dispatch-test')
+  assert.ok(snapshot.files.includes('dispatch.json'))
+  const files = await readdir(join(home, 'snapshots', snapshot.id))
+  assert.ok(files.includes('dispatch.json'))
+})
