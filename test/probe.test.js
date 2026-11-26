@@ -195,6 +195,34 @@ test('sessionEvents 只映射 tool/call，并支持 sinceISO 过滤', async () =
   ])
 })
 
+test('sessionEvents（F5）：since 先用 header.createdAt 跳过窗口外会话，缺失 createdAt 保守读取', async () => {
+  const reads = []
+  const sessionQuery = {
+    async listSessions() {
+      return [
+        { header: { id: 'old', createdAt: '2025-12-01T00:00:00.000Z' } },
+        { header: { id: 'new', createdAt: '2026-01-02T00:00:00.000Z' } },
+        { header: { id: 'unknown' } },
+      ]
+    },
+    async readSession(sessionId) {
+      reads.push(sessionId)
+      const time =
+        sessionId === 'old' ? Date.UTC(2025, 11, 1) : sessionId === 'new' ? Date.UTC(2026, 0, 3) : Date.UTC(2025, 11, 31)
+      return { events: [{ type: 'tool/call', time, data: { name: sessionId } }] }
+    },
+  }
+  const adapter = createHostAdapter(fakeCtx({ sessionQuery }))
+  const rows = await collect(adapter.sessionEvents('2026-01-01T00:00:00.000Z'))
+  assert.deepEqual(reads, ['new', 'unknown'], '窗口外会话不得 readSession；缺失 createdAt 保守读取')
+  assert.deepEqual(rows, [{ tool: 'new', at: '2026-01-03T00:00:00.000Z', sessionId: 'new' }], 'unknown 会话的窗口外事件仍按 event.time 过滤')
+  // 不传 since 时行为同旧：三个会话都读
+  reads.length = 0
+  const all = await collect(adapter.sessionEvents())
+  assert.deepEqual(reads, ['old', 'new', 'unknown'])
+  assert.deepEqual(all.map((row) => row.tool), ['old', 'new', 'unknown'])
+})
+
 test('sessionQuery 缺失时 sessionEvents 返回 null，不抛错', () => {
   const adapter = createHostAdapter(fakeCtx({}))
   assert.equal(adapter.sessionEvents(), null)
