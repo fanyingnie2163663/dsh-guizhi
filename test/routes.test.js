@@ -151,9 +151,11 @@ function createFakeHost(options = {}) {
   const dispatchEvents = options.dispatchEvents ?? []
   const dispatchSupport = options.dispatchSupport ?? { available: true }
   const dispatchSessionId = options.dispatchSessionId ?? 'background-session'
+  const dispatchState = { sessionsCreated: 0, prompts: 0 }
   const host = {
     counts,
     dispatchCalls,
+    dispatchState,
     sessionEventSince,
     get warnings() {
       return warnings.slice()
@@ -176,15 +178,24 @@ function createFakeHost(options = {}) {
     },
     dispatchSupport: () => cloneJson(dispatchSupport),
     async createDispatchSession() {
+      dispatchState.sessionsCreated += 1
+      if (typeof options.createDispatchError === 'string') throw new Error(options.createDispatchError)
       return dispatchSessionId
     },
     async promptDispatchSession(request) {
+      dispatchState.prompts += 1
       dispatchCalls.push(cloneJson(request))
       if (typeof options.promptDispatchError === 'string') throw new Error(options.promptDispatchError)
+      if (options.promptDispatchMissingOnce === true && dispatchState.prompts === 1) {
+        throw Object.assign(new Error('session missing'), { code: 'DISPATCH_SESSION_MISSING' })
+      }
     },
     async readDispatchEvents() {
-      if (typeof options.dispatchReadError === 'string') throw new Error(options.dispatchReadError)
-      return cloneJson(dispatchEvents)
+      if (options.dispatchReadStatus === 'missing') return { status: 'missing' }
+      if (options.dispatchReadStatus === 'unreadable' || typeof options.dispatchReadError === 'string') {
+        return { status: 'unreadable', error: options.dispatchReadError ?? 'read failed' }
+      }
+      return { status: 'events', events: cloneJson(dispatchEvents) }
     },
     sessionEvents(sinceISO) {
       counts.sessionEvents += 1
@@ -1100,3 +1111,84 @@ test('GET state：dispatch 状态由会话事件推导（running → done），�
   assert.equal(unreadable.json.dispatch.state, 'unknown')
   assert.match(unreadable.json.dispatch.error, /boom/)
 })
+
+test('POST dispatch：并发两次只允许一次准入（single-flight）', async () => {
+  const store = createFakeStore({ scan: sampleScan(), selections: { selected: ['dev'], custom: '' } })
+  const deps = makeDeps({ store })
+  const [a, b] = await Promise.all([
+    call(deps, ROUTE_PATHS.dispatch, { kind: 'map' }),
+    call(deps, ROUTE_PATHS.dispatch, { kind: 'map' }),
+  ])
+  assert.deepEqual([a.status, b.status].sort(), [200, 409])
+  assert.equal(deps.host.dispatchState.sessionsCreated, 1)
+  assert.equal(deps.host.dispatchState.prompts, 1)
+})
+
+test('POST dispatch：上一单 running 但会话读取失败 → 409，不建新会话', async () => {
+  const store = createFakeStore({
+    scan: sampleScan(),
+    selections: { selected: ['dev'], custom: '' },
+    dispatch: { kind: 'map', sessionId: 's-prev', requestId: 'r-prev', startedAt: NOW_ISO, state: 'running' },
+  })
+  const deps = makeDeps({ store, hostOptions: { dispatchReadStatus: 'unreadable', dispatchReadError: 'io boom' } })
+  assertFailure(await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' }), 409, /读不到/)
+  assert.equal(deps.host.dispatchState.sessionsCreated, 0)
+})
+
+test('POST dispatch：failed 记录 + 会话已删 → 重建会话并重新投递', async () => {
+  const store = createFakeStore({
+    scan: sampleScan(),
+    selections: { selected: ['dev'], custom: '' },
+    dispatch: { kind: 'map', sessionId: 's-dead', requestId: 'r-dead', startedAt: NOW_ISO, state: 'failed', error: 'model unavailable' },
+  })
+  const deps = makeDeps({ store, hostOptions: { dispatchReadStatus: 'missing' } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' })
+  assert.equal(response.status, 200)
+  assert.equal(deps.host.dispatchState.sessionsCreated, 1)
+  assert.equal(deps.host.dispatchState.prompts, 1)
+  assert.equal(store.docs.get('dispatch').state, 'running')
+  assert.equal(store.docs.get('dispatch').sessionId, 'background-session')
+})
+
+test('POST dispatch：复用会话投递时报会话缺失 → 重建一次并成功', async () => {
+  const store = createFakeStore({
+    scan: sampleScan(),
+    selections: { selected: ['dev'], custom: '' },
+    dispatch: { kind: 'map', sessionId: 's-live', requestId: 'r-old', startedAt: NOW_ISO, state: 'failed', error: 'boom' },
+  })
+  const deps = makeDeps({ store, hostOptions: { promptDispatchMissingOnce: true } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' })
+  assert.equal(response.status, 200)
+  assert.equal(deps.host.dispatchState.sessionsCreated, 1)
+  assert.equal(deps.host.dispatchState.prompts, 2)
+})
+
+test('POST dispatch：创建会话失败 → 502 且写入无 sessionId 的 failed 记录', async () => {
+  const store = createFakeStore({ scan: sampleScan(), selections: { selected: ['dev'], custom: '' } })
+  const deps = makeDeps({ store, hostOptions: { createDispatchError: 'no workspace' } })
+  assertFailure(await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' }), 502, /no workspace/)
+  const written = store.docs.get('dispatch')
+  assert.equal(written.state, 'failed')
+  assert.equal(written.sessionId, '')
+})
+
+test('POST dispatch：只有自定义场景也可以派单', async () => {
+  const store = createFakeStore({ scan: sampleScan(), selections: { selected: [], custom: '我自己的写作流' } })
+  const deps = makeDeps({ store })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' })
+  assert.equal(response.status, 200)
+  assert.match(deps.host.dispatchCalls[0].text, /我自己的写作流/)
+})
+
+test('GET state：不支持派单的宿主也返回 200 + dispatchSupported=false', async () => {
+  const store = createFakeStore({ dispatch: { kind: 'map', sessionId: 's1', requestId: 'r1', startedAt: NOW_ISO, state: 'running' } })
+  const response = await call(
+    makeDeps({ store, hostOptions: { dispatchSupport: { available: false, reason: 'no sessionController' } } }),
+    ROUTE_PATHS.state,
+    {},
+  )
+  assert.equal(response.status, 200)
+  assert.equal(response.json.dispatchSupported, false)
+  assert.equal(response.json.dispatch.state, 'unknown')
+})
+

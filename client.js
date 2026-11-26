@@ -1392,10 +1392,11 @@
           var dispatch = dispatchView()
           var dispatchRunning = dispatch !== null && dispatch.state === 'running'
           var dispatchSupported = !(data !== null && data !== undefined && data.dispatchSupported === false)
-          var dispatchDisabled = action.busy !== '' || !dispatchSupported || selectedIds.length === 0 || dispatchRunning
+          var hasScenarios = selectedIds.length > 0 || (selections !== null && typeof selections.custom === 'string' && selections.custom.trim() !== '')
+          var dispatchDisabled = action.busy !== '' || !dispatchSupported || !hasScenarios || dispatchRunning
           var dispatchHint = ''
           if (!dispatchSupported) dispatchHint = '当前宿主不支持后台派单（缺少后台会话服务）。'
-          else if (selectedIds.length === 0) dispatchHint = '先在「场景」页选择并保存场景，再让 agent 拆解。'
+          else if (!hasScenarios) dispatchHint = '先在「场景」页选择场景或填写自定义场景，并保存。'
           else if (dispatchRunning) dispatchHint = '后台执行中…'
           else if (dispatch !== null && (dispatch.state === 'failed' || dispatch.state === 'timeout' || dispatch.state === 'lost')) dispatchHint = '上次没有成功，可以重试。'
           body = h('div', { className: 'gz-empty' },

@@ -76,3 +76,13 @@ test('client.js（后台派单）：按钮、dispatch 路由、availability 降�
   assert.ok(source.includes("panelContext.get('uiWorkspace', false)"))
   assert.ok(source.includes('stow_map_save'))
 })
+
+test('client.js（后台派单）：自定义场景可派单，openSession 只在显式点击处', async () => {
+  const source = await readClientSource()
+  assert.ok(source.includes('填写自定义场景'))
+  const openAt = source.indexOf('function onOpenDispatchSession')
+  assert.ok(openAt >= 0, '必须存在 onOpenDispatchSession')
+  assert.equal(source.slice(0, openAt).includes('openSession'), false, 'openSession 不得出现在渲染/自动路径')
+  assert.ok(source.slice(openAt).includes('openSession'), '点击处理里应调用 openSession')
+})
+

@@ -437,14 +437,26 @@ test('createDispatchSession / promptDispatchSession 使用固定的 sessionContr
   assert.equal(calls[1][2], true, 'prompt 必须收到 AbortSignal')
 })
 
-test('readDispatchEvents：返回事件数组；读取失败降级 null 且记录 warning', async () => {
+test('readDispatchEvents：三态返回 events / missing / unreadable，warning 只记一次', async () => {
   const adapter = createHostAdapter(fakeCtx({ sessionQuery: { readSession: async () => ({ events: [{ seq: 1 }] }) } }))
-  assert.deepEqual(await adapter.readDispatchEvents('s1'), [{ seq: 1 }])
+  assert.deepEqual(await adapter.readDispatchEvents('s1'), { status: 'events', events: [{ seq: 1 }] })
+  const missing = createHostAdapter(fakeCtx({ sessionQuery: { readSession: async () => { throw Object.assign(new Error('session "s1" not found'), { code: 'session/not-found' }) } } }))
+  assert.deepEqual(await missing.readDispatchEvents('s1'), { status: 'missing' })
   const failing = createHostAdapter(fakeCtx({ sessionQuery: { readSession: async () => { throw new Error('gone') } } }))
-  assert.equal(await failing.readDispatchEvents('s1'), null)
-  assert.ok(failing.warnings.some((message) => message.includes('后台会话')))
-  const missing = createHostAdapter(fakeCtx({}))
-  assert.equal(await missing.readDispatchEvents('s1'), null)
+  assert.deepEqual(await failing.readDispatchEvents('s1'), { status: 'unreadable', error: 'gone' })
+  await failing.readDispatchEvents('s1')
+  assert.equal(failing.warnings.filter((message) => message.includes('后台会话')).length, 1)
+  const absent = createHostAdapter(fakeCtx({}))
+  assert.equal((await absent.readDispatchEvents('s1')).status, 'unreadable')
+})
+
+test('promptDispatchSession：host 报 session 不存在时带 DISPATCH_SESSION_MISSING 码抛出', async () => {
+  const controller = {
+    create: async () => ({ sessionId: 's1' }),
+    prompt: async () => { throw Object.assign(new Error('session "s1" not found'), { code: 'session/not-found' }) },
+  }
+  const adapter = createHostAdapter(fakeCtx({ sessionController: controller }))
+  await assert.rejects(adapter.promptDispatchSession({ sessionId: 's1', requestId: 'r1', text: 'x' }), (error) => error.code === 'DISPATCH_SESSION_MISSING')
 })
 
 
