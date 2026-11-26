@@ -51,6 +51,9 @@
     "node": ">=24.9.0",
     "dsh": ">=0.2.2-rc.2"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "dsh": {
     "manifestVersion": 1,
     "kind": "plugin",
