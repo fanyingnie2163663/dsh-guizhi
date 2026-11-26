@@ -1,0 +1,40 @@
+{
+  "name": "@fanyingnie/dsh-guizhi",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": ">=0.2.2-rc.2"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "kind": "plugin",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    },
+    "capabilities": [
+      "fs:read",
+      "fs:write",
+      "network:ingress",
+      "sessions:read"
+    ],
+    "labels": []
+  }
+}
