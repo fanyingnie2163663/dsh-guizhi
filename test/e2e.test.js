@@ -337,6 +337,9 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
     evidence: { source: 'map', refs: stageIds },
   })
   await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' }, 'R-PACK：/pack 不得写 packs/ 文件')
+  const storedPacks = await readJson(stateFile('packs'))
+  assert.deepEqual(schemas.packs.validate(storedPacks), { ok: true, errors: [] })
+  assert.deepEqual(storedPacks, { packs: [pack] }, 'F2/R-8A：/pack 生成时就把 pack 写进 store(packs)')
   const storedAfterPack = await readJson(stateFile('proposals'))
   assert.deepEqual(storedAfterPack.items, [...storedProposals.items, packProposal], '安装提案保留 + pack 提案追加')
   assert.equal(storedAfterPack.generatedAt, NOW_ISO)
@@ -363,9 +366,9 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.equal(preApply.status, 200)
   assert.deepEqual(preApply.json.proposals, storedAfterPack)
 
-  // --- 8) 应用：apply 才落盘——快照 → 台账 → 包文件 ----------------------
-  const expectedAppliedPack = buildPack({ map, stageIds, title: packProposal.title })
-  assert.equal(expectedAppliedPack.id, pack.id, 'apply 用提案的 title+refs 重建，pack id 必须一致')
+  // --- 8) 应用：apply 才落盘——快照 → 台账（含 existedBefore）→ 包文件 ---
+  // F2/R-8A：apply 直接导出 /pack 时存储的 pack，不再用当前 map 重建。
+  const expectedAppliedPack = pack
   const applyResponse = await call(ROUTE_PATHS.apply, { ids: [packProposal.id, gapItem.id] })
   assert.equal(applyResponse.status, 200, JSON.stringify(applyResponse.json))
   assert.deepEqual(applyResponse.json.applied, [packProposal.id], 'install 提案 v1 不应用')
@@ -380,15 +383,14 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.ok(applySnapshot !== undefined, 'apply 必须先创建快照')
   assert.equal(applySnapshot.tag, 'before-apply')
   const snapshotMeta = await readJson(join(home, 'snapshots', snapshotId, 'meta.json'))
-  assert.deepEqual(snapshotMeta.files, ['map.json', 'proposals.json', 'scan.json', 'selections.json'])
+  assert.deepEqual(snapshotMeta.files, ['map.json', 'packs.json', 'proposals.json', 'scan.json', 'selections.json'])
 
   const appliedPackPath = join(home, 'packs', expectedAppliedPack.id + '.json')
   const ledger = await readJson(join(home, 'snapshots', snapshotId, 'packs-created.json'))
-  assert.deepEqual(ledger.paths, [appliedPackPath], 'R-6A：台账记下本次将创建的全部包路径')
+  assert.deepEqual(ledger.entries, [{ path: appliedPackPath, existedBefore: false }], 'R-6A/F1：台账记路径与「应用前是否存在」')
   assert.deepEqual(await readdir(join(home, 'packs')), [expectedAppliedPack.id + '.json'], 'apply 后 packs/ 里只有本次导出的包（/pack 没写过文件）')
   const appliedPackDoc = await readJson(appliedPackPath)
-  assert.equal(appliedPackDoc.id, expectedAppliedPack.id)
-  assert.deepEqual(packWithoutTimestamp(appliedPackDoc), packWithoutTimestamp(expectedAppliedPack))
+  assert.deepEqual(appliedPackDoc, expectedAppliedPack, '落盘内容必须等于 /pack 时存储的 pack（R-8A）')
   assert.deepEqual(expectedAppliedPack.tools, ['read', 'grep', 'write'])
   assert.deepEqual(expectedAppliedPack.skills, ['brainstorming', 'writing-plans'])
 
@@ -403,6 +405,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.deepEqual(rollbackResponse.json, { restored: true })
   await assert.rejects(stat(appliedPackPath), { code: 'ENOENT' }, '台账记录的包文件必须被删除')
   assert.deepEqual(await readdir(join(home, 'packs')), [], '回滚后本次导出的包文件不残留')
+  assert.deepEqual(await readJson(stateFile('packs')), storedPacks, 'rollback 恢复 apply 前的 packs 状态')
 
   const restoredState = await call(ROUTE_PATHS.state, {})
   assert.deepEqual(restoredState.json, preApply.json, 'scan/map/proposals/selections 必须恢复到 apply 前')
@@ -434,4 +437,52 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   }
   await walk(home)
   assert.deepEqual(leftovers, [], '数据根里不得残留 .tmp 文件')
+})
+
+/** 同一组阶段但 understand 的工具声明不同：模拟「/pack 之后地图又变了」。 */
+function mapWithUnderstandTools(understandTools) {
+  return createMap({
+    scenarios: ['dev'],
+    stages: [
+      { id: 'understand', title: '理解需求', capabilities: [], tools: understandTools },
+      { id: 'deliver', title: '交付', capabilities: [], tools: ['edit'] },
+    ],
+  })
+}
+
+test('R-8A：/pack 后改地图，apply 仍导出生成时的 pack；preview items 形状不变', async () => {
+  const { home, store, call } = await createHarness('guizhi-e2e-')
+  const mapV1 = mapWithUnderstandTools(['read'])
+  assert.equal((await call(ROUTE_PATHS.map, { map: mapV1 })).status, 200)
+  const packResponse = await call(ROUTE_PATHS.pack, { stageIds: ['understand', 'deliver'], title: '研发交付包' })
+  assert.equal(packResponse.status, 200, JSON.stringify(packResponse.json))
+  const generated = packResponse.json.pack
+  assert.deepEqual(generated.tools, ['read', 'edit'])
+  const previewBefore = await call(ROUTE_PATHS.preview, { ids: [generated.id] })
+  assert.equal(previewBefore.status, 200)
+  assert.deepEqual(Object.keys(previewBefore.json.items[0]).sort(), ['effect', 'id', 'kind', 'title'])
+  // 改地图：understand 多声明 write（若 apply 用新地图重建，tools 会变成 read/write/edit）
+  assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read', 'write']) })).status, 200)
+  const applyResponse = await call(ROUTE_PATHS.apply, { ids: [generated.id] })
+  assert.equal(applyResponse.status, 200, JSON.stringify(applyResponse.json))
+  const exported = JSON.parse(await readFile(join(home, 'packs', generated.id + '.json'), 'utf8'))
+  assert.deepEqual(exported, generated, '必须导出 /pack 时存储的 pack（含 createdAt/tools），不是用新地图重建')
+  assert.deepEqual(exported.tools, ['read', 'edit'])
+  const previewAfter = await call(ROUTE_PATHS.preview, { ids: [generated.id] })
+  assert.deepEqual(previewAfter.json, previewBefore.json, 'preview items 形状与内容不变（effect 来自生成时的 pack）')
+  assert.deepEqual((await store.read('packs')).value.packs[0], generated)
+})
+
+test('R-8A：提案存在但 store(packs) 缺失该包 → apply 400 PACK_NOT_FOUND，不落 packs/ 文件', async () => {
+  const { home, call } = await createHarness('guizhi-e2e-')
+  assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read']) })).status, 200)
+  const packResponse = await call(ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assert.equal(packResponse.status, 200)
+  const packId = packResponse.json.pack.id
+  // 模拟旧数据/手工清理：提案还在，能力包存储没了
+  await rm(join(home, 'packs.json'), { force: true })
+  const response = await call(ROUTE_PATHS.apply, { ids: [packId] })
+  assert.equal(response.status, 400, JSON.stringify(response.json))
+  assert.equal(response.json.code, 'PACK_NOT_FOUND')
+  await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' })
 })

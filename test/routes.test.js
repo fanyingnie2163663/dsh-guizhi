@@ -1,9 +1,10 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROUTE_PATHS, TOOL_SPECS, createRoutes, registerTools } from '../lib/routes.js'
+import { buildPack } from '../lib/packs.js'
 import { schemas } from '../lib/schemas.js'
 
 /**
@@ -128,6 +129,8 @@ function createFakeStore(initial = {}) {
 function createFakeHost(options = {}) {
   const warnings = []
   const counts = { listTools: 0, listPlugins: 0, listSkills: 0, sessionEvents: 0 }
+  /** F5：sessionEvents 收到的 sinceISO 参数（未传时记 null）。 */
+  const sessionEventSince = []
   const tools =
     options.tools ??
     [
@@ -146,6 +149,7 @@ function createFakeHost(options = {}) {
     ]
   const host = {
     counts,
+    sessionEventSince,
     get warnings() {
       return warnings.slice()
     },
@@ -165,8 +169,9 @@ function createFakeHost(options = {}) {
       counts.listSkills += 1
       return cloneJson(skills)
     },
-    sessionEvents() {
+    sessionEvents(sinceISO) {
       counts.sessionEvents += 1
+      sessionEventSince.push(sinceISO === undefined ? null : sinceISO)
       const rows = Array.isArray(events) ? events.slice() : []
       const onEvent = typeof options.onSessionEvent === 'function' ? options.onSessionEvent : null
       return (async function* iterate() {
@@ -302,6 +307,7 @@ test('POST scan：只调用一次 scanFacts（fake host 计数）并把合法 sc
   assert.equal(host.counts.listPlugins, 1)
   assert.equal(host.counts.listSkills, 1)
   assert.equal(host.counts.sessionEvents, 1)
+  assert.deepEqual(host.sessionEventSince, [daysBefore(30)], 'F5：scan 必须把 30 天窗口下推给 sessionEvents')
   assert.deepEqual(schemas.scan.validate(response.json), { ok: true, errors: [] })
   const written = store.writes.filter((write) => write.name === 'scan')
   assert.equal(written.length, 1, '扫描结果必须写一次 store(scan)')
@@ -448,6 +454,19 @@ test('POST map：缺少 map 字段返回 400', async () => {
   assertFailure(response, 400, /map/)
 })
 
+test('POST map（F7）：custom 复用 scenarios 的 200 码点截断，再校验/落盘且不改输入', async () => {
+  const store = createFakeStore()
+  const map = sampleMap()
+  map.custom = '😀'.repeat(205)
+  const response = await call(makeDeps({ store }), ROUTE_PATHS.map, { map })
+  assert.equal(response.status, 200)
+  const written = store.writes.filter((write) => write.name === 'map')
+  assert.equal(written.length, 1)
+  assert.equal(Array.from(written[0].value.custom).length, 200, '必须按码点截断到 200，不能劈开代理对')
+  assert.equal(written[0].value.custom, '😀'.repeat(200))
+  assert.equal(Array.from(map.custom).length, 205, '不得修改调用方传入的 map')
+})
+
 // ---------------------------------------------------------------------------
 // POST pack (R-PACK): buildPack + proposals upsert, never exports a file
 // ---------------------------------------------------------------------------
@@ -504,6 +523,11 @@ test('POST pack：生成 kind=pack 提案写入 proposals，不写 packs 文件�
   assert.deepEqual(written.items.map((item) => item.id), ['pack-dev', 'install-web', pack.id], '既有提案保留、新提案追加')
   assert.deepEqual(written.items[2], proposal)
   assert.equal(written.generatedAt, NOW_ISO, 'generatedAt 使用注入时钟')
+  const packWrites = store.writes.filter((write) => write.name === 'packs')
+  assert.equal(packWrites.length, 1, 'F2/R-8A：/pack 必须把生成时的 pack 写入 store(packs)')
+  assert.deepEqual(schemas.packs.validate(packWrites[0].value), { ok: true, errors: [] })
+  assert.deepEqual(packWrites[0].value, { packs: [pack] })
+  assert.deepEqual(store.writes.map((write) => write.name).slice(-2), ['packs', 'proposals'], '先存 pack 再写提案')
   await assertNoPacksExport(home)
 })
 
@@ -555,7 +579,59 @@ test('registerTools：stow_pack_build 与 /pack 路由同行为（写提案、�
   const writes = store.writes.filter((write) => write.name === 'proposals')
   assert.equal(writes.length, 1)
   assert.deepEqual(writes[0].value.items, [result.proposal])
+  const packWrites = store.writes.filter((write) => write.name === 'packs')
+  assert.equal(packWrites.length, 1, 'stow_pack_build 与 /pack 同行为：也存 pack')
+  assert.equal(packWrites[0].value.packs[0].id, result.pack.id)
   await assertNoPacksExport(home)
+})
+
+test('POST pack（F2）：同 id 重复生成在 store(packs) 里原地替换、不追加', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
+  cleanup.push(home)
+  const store = createFakeStore({ map: sampleMap() })
+  const deps = makeDeps({ store, home })
+  const first = await call(deps, ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  const second = await call(deps, ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assert.equal(first.status, 200)
+  assert.equal(second.status, 200)
+  assert.equal(first.json.pack.id, second.json.pack.id)
+  const stored = (await store.read('packs')).value
+  assert.deepEqual(stored.packs.map((pack) => pack.id), [second.json.pack.id], '同 id 原地替换，不重复追加')
+  assert.deepEqual(stored.packs[0], second.json.pack)
+  await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' })
+})
+
+test('POST pack（F2）：store(packs) 上限 50 条，超出丢弃最旧并返回 warning', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
+  cleanup.push(home)
+  const map = sampleMap()
+  const seeded = Array.from({ length: 50 }, (_, index) => buildPack({ map, stageIds: ['understand'], title: '旧包 ' + index }))
+  const store = createFakeStore({ map, packs: { packs: seeded } })
+  const response = await call(makeDeps({ store, home }), ROUTE_PATHS.pack, { stageIds: ['deliver'], title: '新包' })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.ok(Array.isArray(response.json.warnings) && response.json.warnings.length === 1, JSON.stringify(response.json.warnings))
+  assert.match(response.json.warnings[0], /上限|丢弃/)
+  const stored = (await store.read('packs')).value
+  assert.equal(stored.packs.length, 50, '上限 50 条')
+  assert.equal(stored.packs.some((pack) => pack.id === seeded[0].id), false, '丢弃最旧')
+  assert.equal(stored.packs[stored.packs.length - 1].id, response.json.pack.id, '新包追加在尾部')
+})
+
+test('POST pack（F2）：packs 状态损坏/不可读时 400 PACKS_INVALID，不覆盖也不写提案', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
+  cleanup.push(home)
+  const broken = createFakeStore({ map: sampleMap(), packs: { packs: 'nope' } })
+  const shapeResponse = await call(makeDeps({ store: broken, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assertFailure(shapeResponse, 400, /能力包/)
+  assert.equal(shapeResponse.json.code, 'PACKS_INVALID')
+  assert.deepEqual(broken.writes, [], '坏文档不得被覆盖')
+  const unreadable = createFakeStore({ map: sampleMap() })
+  unreadable.errors.packs = '状态 "packs" 的 JSON 已损坏：Unexpected token'
+  const readResponse = await call(makeDeps({ store: unreadable, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assertFailure(readResponse, 400, /能力包/)
+  assert.equal(readResponse.json.code, 'PACKS_INVALID')
+  assert.deepEqual(unreadable.writes, [])
+  await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' })
 })
 
 // ---------------------------------------------------------------------------
@@ -660,13 +736,24 @@ test('POST apply：状态读取 I/O 失败映射为 500（STATE_READ_FAILED）',
   assert.equal(response.json.code, 'STATE_READ_FAILED')
 })
 
-test('POST rollback：非法 snapshotId 返回 400（SNAPSHOT_INVALID）', async () => {
+test('POST apply（F2）：提案 id 在 store(packs) 缺失 → 400 PACK_NOT_FOUND，不建快照', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-apply-'))
+  cleanup.push(home)
+  const store = createFakeStore({ proposals: sampleProposals() })
+  const response = await call(makeDeps({ store, home }), ROUTE_PATHS.apply, { ids: ['pack-dev'] })
+  assertFailure(response, 400, /能力包/)
+  assert.equal(response.json.code, 'PACK_NOT_FOUND')
+  assert.deepEqual(store.writes, [])
+  assert.deepEqual(store.snapshots, [])
+})
+
+test('POST rollback：非法 snapshotId 映射为 404（ROLLBACK_FAILED）', async () => {
   const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-rollback-'))
   cleanup.push(home)
   for (const snapshotId of ['', '../etc', 'bad id!', 42]) {
     const response = await call(makeDeps({ home }), ROUTE_PATHS.rollback, { snapshotId })
-    assertFailure(response, 400, /快照 id/)
-    assert.equal(response.json.code, 'SNAPSHOT_INVALID')
+    assertFailure(response, 404, /快照/)
+    assert.equal(response.json.code, 'ROLLBACK_FAILED')
   }
 })
 
@@ -677,6 +764,23 @@ test('POST rollback：快照不存在映射为 404（ROLLBACK_FAILED），不抛
   const response = await call(makeDeps({ store, home }), ROUTE_PATHS.rollback, { snapshotId: 'snapshot-missing' })
   assertFailure(response, 404, /快照/)
   assert.equal(response.json.code, 'ROLLBACK_FAILED')
+})
+
+test('POST rollback（F7）：快照存在但 store.restore I/O 失败 → 500（ROLLBACK_RESTORE_FAILED），不再误报 404', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-rollback-'))
+  cleanup.push(home)
+  await mkdir(join(home, 'snapshots', 'snap-001'), { recursive: true })
+  await writeFile(
+    join(home, 'snapshots', 'snap-001', 'meta.json'),
+    JSON.stringify({ id: 'snap-001', tag: 'before-apply', createdAt: NOW_ISO, files: [] }),
+  )
+  const store = createFakeStore()
+  store.restore = async () => {
+    throw new Error('disk boom on restore')
+  }
+  const response = await call(makeDeps({ store, home }), ROUTE_PATHS.rollback, { snapshotId: 'snap-001' })
+  assertFailure(response, 500, /回滚失败|disk boom/)
+  assert.equal(response.json.code, 'ROLLBACK_RESTORE_FAILED')
 })
 
 // ---------------------------------------------------------------------------

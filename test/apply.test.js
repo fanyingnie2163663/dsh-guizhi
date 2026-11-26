@@ -1,7 +1,7 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStore } from '../lib/store.js'
@@ -38,6 +38,14 @@ function makeMap() {
   }
 }
 
+/** 同一个地图但 understand 阶段多声明一个 write 工具：用来模拟「打包后地图又变了」。 */
+function makeMapV2() {
+  return {
+    ...makeMap(),
+    stages: makeMap().stages.map((stage) => (stage.id === 'understand' ? { ...stage, tools: ['read', 'write'] } : stage)),
+  }
+}
+
 /** 一条 kind=pack 的合法提案：evidence.refs 就是 buildPack 的 stageIds。 */
 function packProposal(overrides = {}) {
   return {
@@ -48,6 +56,28 @@ function packProposal(overrides = {}) {
     evidence: { source: 'map', refs: ['understand', 'deliver'] },
     ...overrides,
   }
+}
+
+/** 一个真实 buildPack 产物：F2 起 apply 只导出 store('packs') 里存储的包。 */
+function makePack(map = makeMap(), stageIds = ['understand', 'deliver'], title = '研发助手包') {
+  return buildPack({ map, stageIds, title })
+}
+
+/** 把 pack 包成 proposals 文档里的 kind=pack 提案（proposal id 必须等于 pack id，apply 按它查存储包）。 */
+function packProposalFor(pack, overrides = {}) {
+  return {
+    id: pack.id,
+    kind: 'pack',
+    title: pack.title,
+    effect: '按选中的工作流阶段生成能力包',
+    evidence: { source: 'map', refs: pack.stageIds.slice() },
+    ...overrides,
+  }
+}
+
+/** store('packs') 状态文档（F2）。 */
+function packsDoc(...packs) {
+  return { packs }
 }
 
 /** 一条 kind=install 的合法提案（v1 只应产生 warning，不写 profile）。 */
@@ -79,12 +109,13 @@ function makeProposals(items) {
   return { items, generatedAt: '2026-11-26T00:00:00.000Z' }
 }
 
-/** 用真实文件系统搭一个数据根，并可选写入 map / proposals 状态。 */
-async function seed({ map, proposals } = {}) {
+/** 用真实文件系统搭一个数据根，并可选写入 map / proposals / packs 状态。 */
+async function seed({ map, proposals, packs } = {}) {
   const home = await makeHome()
   const store = createStore({ home })
   if (map !== undefined) await store.write('map', map)
   if (proposals !== undefined) await store.write('proposals', proposals)
+  if (packs !== undefined) await store.write('packs', packs)
   return { home, store }
 }
 
@@ -122,10 +153,19 @@ function canonicalJson(value) {
   return JSON.stringify(value)
 }
 
+/** 从真实文件系统读出 apply 记账条目（F1：{path, existedBefore}）。 */
+async function readLedgerEntries(home, snapshotId) {
+  const file = join(home, 'snapshots', snapshotId, 'packs-created.json')
+  const doc = JSON.parse(await readFile(file, 'utf8'))
+  if (Array.isArray(doc.entries)) return doc.entries
+  // 兼容旧快照（升级前的 {paths} 台账按「非本次新建」处理，但仍只在 packs 内删除）。
+  if (Array.isArray(doc.paths)) return doc.paths.map((path) => ({ path, existedBefore: false }))
+  throw new Error('台账形状无法识别：' + JSON.stringify(doc))
+}
+
 /** 从真实文件系统读出 apply 记账记录的 pack 路径。 */
 async function readLedgerPaths(home, snapshotId) {
-  const file = join(home, 'snapshots', snapshotId, 'packs-created.json')
-  return JSON.parse(await readFile(file, 'utf8')).paths
+  return (await readLedgerEntries(home, snapshotId)).map((entry) => entry.path)
 }
 
 /* ------------------------------------------------------------------ preview */
@@ -229,12 +269,14 @@ test('preview/apply：提案文档内重复 id → ApplyError（避免 preview �
 
 /* -------------------------------------------------------------------- apply */
 
-test('apply：pack 提案按 refs 建包导出，install/skill 只进 warnings，快照与记账写出', async () => {
-  const proposals = makeProposals([packProposal(), installProposal(), skillProposal()])
-  const { home, store } = await seed({ map: makeMap(), proposals })
+test('apply：按提案 id 从 store(packs) 导出已存储的包，install/skill 只进 warnings，快照与记账写出', async () => {
+  const storedPack = makePack()
+  const proposal = packProposalFor(storedPack)
+  const proposals = makeProposals([proposal, installProposal(), skillProposal()])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(storedPack) })
   const before = await tree(home)
-  const result = await apply({ ids: ['install-1', 'pack-1', 'skill-1'], store, home, now: 1790000000000 })
-  assert.deepEqual(result.applied, ['pack-1'])
+  const result = await apply({ ids: ['install-1', proposal.id, 'skill-1'], store, home, now: 1790000000000 })
+  assert.deepEqual(result.applied, [proposal.id])
   assert.equal(result.warnings.length, 2)
   assert.ok(result.warnings.every((warning) => warning.includes('v1 暂不安装')), JSON.stringify(result.warnings))
   assert.ok(result.warnings.some((warning) => warning.includes('demo-plugin')))
@@ -258,7 +300,8 @@ test('apply：pack 提案按 refs 建包导出，install/skill 只进 warnings�
   assert.deepEqual(pack.stageIds, ['understand', 'deliver'])
   assert.deepEqual(pack.tools, ['read', 'edit'])
   assert.deepEqual(pack.skills, ['brainstorming'])
-  assert.deepEqual(await readLedgerPaths(home, result.snapshotId), [packPath])
+  assert.deepEqual(await readLedgerEntries(home, result.snapshotId), [{ path: packPath, existedBefore: false }])
+  assert.deepEqual((await store.read('packs')).value, packsDoc(storedPack), 'apply 不得改写 packs 状态文档')
 
   // 所有新增文件都在 home 内，只落在 packs/ 与 snapshots/（没有任何 profile 写入）
   const created = (await tree(home)).filter((path) => !before.includes(path))
@@ -275,17 +318,20 @@ test('apply：只选 install/skill 时 applied 为空、记账为空、不生成
   const result = await apply({ ids: ['install-1', 'skill-1'], store, home })
   assert.deepEqual(result.applied, [])
   assert.equal(result.warnings.length, 2)
-  assert.deepEqual(await readLedgerPaths(home, result.snapshotId), [])
+  assert.deepEqual(await readLedgerEntries(home, result.snapshotId), [])
   assert.equal(await exists(join(home, 'packs')), false)
   assert.equal(await exists(join(home, 'profiles')), false)
 })
 
 test('apply：多个 pack 提案按 ids 顺序写文件并记账，applied 顺序与 ids 一致', async () => {
-  const second = packProposal({ id: 'pack-2', title: '交付助手包', evidence: { source: 'map', refs: ['deliver'] } })
-  const proposals = makeProposals([packProposal(), second])
-  const { home, store } = await seed({ map: makeMap(), proposals })
-  const result = await apply({ ids: ['pack-2', 'pack-1'], store, home })
-  assert.deepEqual(result.applied, ['pack-2', 'pack-1'])
+  const first = makePack()
+  const secondPack = makePack(makeMap(), ['deliver'], '交付助手包')
+  const second = packProposalFor(secondPack)
+  const firstProposal = packProposalFor(first)
+  const proposals = makeProposals([firstProposal, second])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(first, secondPack) })
+  const result = await apply({ ids: [second.id, firstProposal.id], store, home })
+  assert.deepEqual(result.applied, [second.id, firstProposal.id])
   const paths = await readLedgerPaths(home, result.snapshotId)
   assert.equal(paths.length, 2)
   const titles = []
@@ -335,47 +381,72 @@ test('apply：proposals 缺失/损坏/形状不符都抛 ApplyError 且不写盘
   assert.deepEqual(await invalid.store.listSnapshots(), [])
 })
 
-test('apply：map 缺失或损坏时 pack 提案抛 ApplyError，不创建快照', async () => {
-  const proposals = makeProposals([packProposal()])
-  for (const map of [undefined, { stages: 'x' }, { scenarios: [] }]) {
-    const { home, store } = await seed({ proposals })
-    if (map !== undefined) await store.write('map', map)
-    const before = await tree(home)
-    const error = await apply({ ids: ['pack-1'], store, home }).then(() => null, (err) => err)
-    assert.ok(error instanceof ApplyError, JSON.stringify(map))
-    assert.match(error.message, /地图/, JSON.stringify(map))
-    assert.deepEqual(await tree(home), before, JSON.stringify(map))
-    assert.deepEqual(await store.listSnapshots(), [], JSON.stringify(map))
-  }
+test('F2：store(packs) 缺失或文档损坏时 apply 抛可读 ApplyError，不创建快照不写盘', async () => {
+  const pack = makePack()
+  const proposal = packProposalFor(pack)
+  const proposals = makeProposals([proposal])
+  // 缺失 → PACK_NOT_FOUND
+  const missing = await seed({ proposals })
+  let before = await tree(missing.home)
+  const missingError = await apply({ ids: [proposal.id], store: missing.store, home: missing.home }).then(() => null, (err) => err)
+  assert.ok(missingError instanceof ApplyError)
+  assert.equal(missingError.code, 'PACK_NOT_FOUND')
+  assert.match(missingError.message, /能力包/)
+  assert.deepEqual(await tree(missing.home), before)
+  assert.deepEqual(await missing.store.listSnapshots(), [])
+  // JSON 损坏 → PACKS_INVALID
+  const corrupt = await seed({ proposals })
+  await writeFile(join(corrupt.home, 'packs.json'), '{ broken json')
+  before = await tree(corrupt.home)
+  const corruptError = await apply({ ids: [proposal.id], store: corrupt.store, home: corrupt.home }).then(() => null, (err) => err)
+  assert.ok(corruptError instanceof ApplyError)
+  assert.equal(corruptError.code, 'PACKS_INVALID')
+  assert.deepEqual(await tree(corrupt.home), before)
+  // 形状不符 → PACKS_INVALID
+  const invalid = await seed({ proposals, packs: { packs: 'nope' } })
+  before = await tree(invalid.home)
+  const invalidError = await apply({ ids: [proposal.id], store: invalid.store, home: invalid.home }).then(() => null, (err) => err)
+  assert.ok(invalidError instanceof ApplyError)
+  assert.equal(invalidError.code, 'PACKS_INVALID')
+  assert.deepEqual(await tree(invalid.home), before)
+  assert.deepEqual(await invalid.store.listSnapshots(), [])
 })
 
-test('apply：kind=pack 缺少 evidence.refs 抛 ApplyError（不静默用空阶段建包），不创建快照', async () => {
-  const proposals = makeProposals([packProposal({ evidence: { source: 'map' } })])
-  const { home, store } = await seed({ map: makeMap(), proposals })
+test('F2：提案 id 在 store(packs) 里找不到时 PACK_NOT_FOUND（不按当前地图重建），不创建快照', async () => {
+  const stored = makePack()
+  const other = makePack(makeMap(), ['deliver'], '另一个包')
+  const proposal = packProposalFor(stored)
+  const proposals = makeProposals([proposal])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(other) })
   const before = await tree(home)
-  const error = await apply({ ids: ['pack-1'], store, home }).then(() => null, (err) => err)
+  const error = await apply({ ids: [proposal.id], store, home }).then(() => null, (err) => err)
   assert.ok(error instanceof ApplyError)
-  assert.match(error.message, /refs/)
+  assert.equal(error.code, 'PACK_NOT_FOUND')
+  assert.match(error.message, /能力包/)
   assert.deepEqual(await tree(home), before)
   assert.deepEqual(await store.listSnapshots(), [])
-})
-
-test('apply：evidence.refs 指向地图中不存在的阶段 → PACK_BUILD_FAILED，不创建快照', async () => {
-  const proposals = makeProposals([packProposal({ evidence: { source: 'map', refs: ['understand', 'ghost'] } })])
-  const { home, store } = await seed({ map: makeMap(), proposals })
-  const before = await tree(home)
-  const error = await apply({ ids: ['pack-1'], store, home }).then(() => null, (err) => err)
-  assert.ok(error instanceof ApplyError)
-  assert.equal(error.code, 'PACK_BUILD_FAILED')
-  assert.match(error.message, /ghost/)
-  assert.deepEqual(await store.listSnapshots(), [])
-  assert.deepEqual(await tree(home), before)
   assert.equal(await exists(join(home, 'packs')), false)
 })
 
+test('F2：store(packs) 里的包未通过 schemas.pack → PACKS_INVALID，不创建快照', async () => {
+  const good = makePack()
+  const proposal = packProposalFor(good)
+  const bad = { ...good, version: 2 }
+  const { home, store } = await seed({ proposals: makeProposals([proposal]), packs: packsDoc(bad) })
+  const before = await tree(home)
+  const error = await apply({ ids: [proposal.id], store, home }).then(() => null, (err) => err)
+  assert.ok(error instanceof ApplyError)
+  assert.equal(error.code, 'PACKS_INVALID')
+  assert.match(error.message, /version/)
+  assert.deepEqual(await tree(home), before)
+  assert.deepEqual(await store.listSnapshots(), [])
+})
+
 test('apply：store.snapshot 返回非法快照 id 时拒绝（对齐 rollback 的 SNAPSHOT_ID 校验），不写任何包', async () => {
-  const proposals = makeProposals([packProposal()])
-  const { home, store } = await seed({ map: makeMap(), proposals })
+  const pack = makePack()
+  const proposal = packProposalFor(pack)
+  const proposals = makeProposals([proposal])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(pack) })
   // 防御性用例：真实 store 不会返回坏 id，只有被篡改/有 bug 的注入实现才会
   const hostile = {
     read: (name) => store.read(name),
@@ -383,7 +454,7 @@ test('apply：store.snapshot 返回非法快照 id 时拒绝（对齐 rollback �
     snapshot: async () => ({ id: '../evil', tag: 'before-apply', createdAt: '2026-11-26T00:00:00.000Z', files: [] }),
   }
   const before = await tree(home)
-  const error = await apply({ ids: ['pack-1'], store: hostile, home }).then(() => null, (err) => err)
+  const error = await apply({ ids: [proposal.id], store: hostile, home }).then(() => null, (err) => err)
   assert.ok(error instanceof ApplyError)
   assert.equal(error.code, 'SNAPSHOT_INVALID')
   assert.match(error.message, /快照 id/)
@@ -402,12 +473,14 @@ test('apply：ids 缺失/为空/非法/重复都拒绝（不默认应用全部�
 })
 
 test('apply：先快照后写——导出失败时不留半成品 pack，但快照已创建（可回滚）', async () => {
-  const proposals = makeProposals([packProposal()])
-  const { home, store } = await seed({ map: makeMap(), proposals })
+  const pack = makePack()
+  const proposal = packProposalFor(pack)
+  const proposals = makeProposals([proposal])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(pack) })
   // 用同名文件占住 packs 目录，让 exportPack 在 mkdir 时真实失败（不是 mock）
   await writeFile(join(home, 'packs'), 'blocked')
   const before = await tree(home)
-  const error = await apply({ ids: ['pack-1'], store, home }).then(() => null, (err) => err)
+  const error = await apply({ ids: [proposal.id], store, home }).then(() => null, (err) => err)
   assert.ok(error instanceof ApplyError)
   assert.equal(error.code, 'APPLY_WRITE_FAILED')
   assert.match(error.message, /能力包|失败/)
@@ -423,24 +496,25 @@ test('apply：先快照后写——导出失败时不留半成品 pack，但快�
   assert.deepEqual(await rollback({ snapshotId: snapshots[0].id, store, home }), { restored: true })
 })
 
-test('apply：第一个包成功、第二个包失败——清理已写文件、台账按结果重写/删除，快照仍可回滚', async () => {
-  const second = packProposal({ id: 'pack-2', title: '交付助手包', evidence: { source: 'map', refs: ['deliver'] } })
-  const proposals = makeProposals([packProposal(), second])
-  const { home, store } = await seed({ map: makeMap(), proposals })
-  const firstId = buildPack({ map: makeMap(), stageIds: ['understand', 'deliver'], title: '研发助手包' }).id
-  const secondId = buildPack({ map: makeMap(), stageIds: ['deliver'], title: '交付助手包' }).id
-  // 用同名目录真实占住第二个包的目标路径 → 第二次 export 在 rename 时失败
-  await mkdir(join(home, 'packs', secondId + '.json'), { recursive: true })
-  const error = await apply({ ids: ['pack-1', 'pack-2'], store, home }).then(() => null, (err) => err)
+test('apply：第一个包成功、第二个包失败——清理已写文件、台账删除，快照仍可回滚', async () => {
+  const firstPack = makePack()
+  // 非法的 pack id 会让 exportPack 在写文件前抛错：真实的第二个包导出失败
+  const secondPack = { ...makePack(makeMap(), ['deliver'], '交付助手包'), id: 'pack/bad-name' }
+  const firstProposal = packProposalFor(firstPack)
+  const second = packProposalFor(secondPack)
+  const proposals = makeProposals([firstProposal, second])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(firstPack, secondPack) })
+  const firstId = firstPack.id
+  const error = await apply({ ids: [firstProposal.id, second.id], store, home }).then(() => null, (err) => err)
   assert.ok(error instanceof ApplyError)
   assert.equal(error.code, 'APPLY_WRITE_FAILED')
   assert.match(error.message, /写能力包失败/)
   assert.match(error.message, /台账/)
   const snapshotId = error.snapshotId
   assert.equal(typeof snapshotId, 'string')
-  // 第一个包已被清理；台账被改写为空 → 删除；只剩占位目录
+  // 第一个包已被清理；台账被改写为空 → 删除
   assert.equal(await exists(join(home, 'packs', firstId + '.json')), false)
-  assert.deepEqual((await readdir(join(home, 'packs'))).sort(), [secondId + '.json'])
+  assert.deepEqual(await readdir(join(home, 'packs')), [])
   assert.equal(await exists(join(home, 'snapshots', snapshotId, 'packs-created.json')), false)
   assert.deepEqual(await tempLeftovers(home), [])
   // 快照本身可用于回滚（台账缺失当空）
@@ -450,9 +524,11 @@ test('apply：第一个包成功、第二个包失败——清理已写文件、
 /* ----------------------------------------------------------------- rollback */
 
 test('rollback：删除 apply 创建的 pack 文件并恢复状态，重复调用幂等', async () => {
-  const proposals = makeProposals([packProposal(), installProposal()])
-  const { home, store } = await seed({ map: makeMap(), proposals })
-  const applied = await apply({ ids: ['pack-1', 'install-1'], store, home })
+  const storedPack = makePack()
+  const packProposalItem = packProposalFor(storedPack)
+  const proposals = makeProposals([packProposalItem, installProposal()])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(storedPack) })
+  const applied = await apply({ ids: [packProposalItem.id, 'install-1'], store, home })
   const ledgerPath = join(home, 'snapshots', applied.snapshotId, 'packs-created.json')
   const paths = await readLedgerPaths(home, applied.snapshotId)
   assert.equal(paths.length, 1)
@@ -488,14 +564,25 @@ test('rollback：没有记账的手工快照只恢复状态也成功（记账缺
 })
 
 test('rollback：记账损坏时抛 ApplyError，且不删除 pack、不恢复状态', async () => {
-  const proposals = makeProposals([packProposal()])
-  const { home, store } = await seed({ map: makeMap(), proposals })
-  const applied = await apply({ ids: ['pack-1'], store, home })
+  const storedPack = makePack()
+  const packProposalItem = packProposalFor(storedPack)
+  const proposals = makeProposals([packProposalItem])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(storedPack) })
+  const applied = await apply({ ids: [packProposalItem.id], store, home })
   const ledgerPath = join(home, 'snapshots', applied.snapshotId, 'packs-created.json')
   const packPath = (await readLedgerPaths(home, applied.snapshotId))[0]
   const changed = makeProposals([installProposal({ id: 'install-2' })])
   await store.write('proposals', changed)
-  const broken = ['not json', JSON.stringify({}), JSON.stringify({ paths: 'x' }), JSON.stringify({ paths: [42] })]
+  const broken = [
+    'not json',
+    JSON.stringify({}),
+    JSON.stringify({ entries: 'x' }),
+    JSON.stringify({ entries: [42] }),
+    JSON.stringify({ entries: [{ path: 42, existedBefore: false }] }),
+    JSON.stringify({ entries: [{ path: '/tmp/x', existedBefore: 'yes' }] }),
+    JSON.stringify({ paths: 'x' }),
+    JSON.stringify({ paths: [42] }),
+  ]
   for (const raw of broken) {
     await writeFile(ledgerPath, raw)
     const error = await rollback({ snapshotId: applied.snapshotId, store, home }).then(() => null, (err) => err)
@@ -507,14 +594,16 @@ test('rollback：记账损坏时抛 ApplyError，且不删除 pack、不恢复�
 })
 
 test('rollback：记账里的路径逃出 packs 目录时拒绝删除外部文件', async () => {
-  const proposals = makeProposals([packProposal()])
-  const { home, store } = await seed({ map: makeMap(), proposals })
-  const applied = await apply({ ids: ['pack-1'], store, home })
+  const storedPack = makePack()
+  const packProposalItem = packProposalFor(storedPack)
+  const proposals = makeProposals([packProposalItem])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(storedPack) })
+  const applied = await apply({ ids: [packProposalItem.id], store, home })
   const ledgerPath = join(home, 'snapshots', applied.snapshotId, 'packs-created.json')
   const packPath = (await readLedgerPaths(home, applied.snapshotId))[0]
   const outside = join(home, 'outside.json')
   await writeFile(outside, 'keep me')
-  await writeFile(ledgerPath, JSON.stringify({ paths: [outside] }))
+  await writeFile(ledgerPath, JSON.stringify({ entries: [{ path: outside, existedBefore: false }] }))
   const error = await rollback({ snapshotId: applied.snapshotId, store, home }).then(() => null, (err) => err)
   assert.ok(error instanceof ApplyError)
   assert.match(error.message, /路径|记账/)
@@ -523,10 +612,13 @@ test('rollback：记账里的路径逃出 packs 目录时拒绝删除外部文�
 })
 
 test('rollback：台账路径存在但类型异常（目录）时整体拒绝，不半删也不恢复', async () => {
-  const second = packProposal({ id: 'pack-2', title: '交付助手包', evidence: { source: 'map', refs: ['deliver'] } })
-  const proposals = makeProposals([packProposal(), second])
-  const { home, store } = await seed({ map: makeMap(), proposals })
-  const applied = await apply({ ids: ['pack-1', 'pack-2'], store, home })
+  const firstPack = makePack()
+  const secondPack = makePack(makeMap(), ['deliver'], '交付助手包')
+  const firstProposal = packProposalFor(firstPack)
+  const secondProposal = packProposalFor(secondPack)
+  const proposals = makeProposals([firstProposal, secondProposal])
+  const { home, store } = await seed({ map: makeMap(), proposals, packs: packsDoc(firstPack, secondPack) })
+  const applied = await apply({ ids: [firstProposal.id, secondProposal.id], store, home })
   const paths = await readLedgerPaths(home, applied.snapshotId)
   assert.equal(paths.length, 2)
   const [firstPath, secondPath] = paths
@@ -549,4 +641,105 @@ test('rollback：非法 snapshotId 抛 ApplyError（拒绝路径穿越，不读�
   for (const snapshotId of ['../etc', '', '   ', 42, null, undefined, 'a/b']) {
     await assert.rejects(rollback({ snapshotId, store, home }), ApplyError, String(snapshotId))
   }
+})
+
+/* ------------------------------------------------- F1 覆盖回滚（修复契约 R-6B） */
+
+/** 二次 apply 覆盖同一 pack id 的公共搭台：第一次写 v1，第二次写 v2。 */
+async function seedOverwrite({ v1 = makePack(), v2 = makePack(makeMapV2()) } = {}) {
+  const proposal = packProposalFor(v1)
+  const { home, store } = await seed({ proposals: makeProposals([proposal]), packs: packsDoc(v1) })
+  const file = join(home, 'packs', v1.id + '.json')
+  const first = await apply({ ids: [proposal.id], store, home })
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), v1)
+  await store.write('packs', packsDoc(v2))
+  const second = await apply({ ids: [proposal.id], store, home })
+  assert.notEqual(second.snapshotId, first.snapshotId)
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), v2)
+  return { home, store, proposal, first, second, file, v1, v2 }
+}
+
+test('F1：二次 apply 覆盖旧包后回滚，恢复覆盖前内容而不是删除旧包（R-6B）', async () => {
+  const { home, store, first, second, file, v1 } = await seedOverwrite()
+  assert.deepEqual(await readLedgerEntries(home, second.snapshotId), [{ path: file, existedBefore: true }])
+  assert.deepEqual(await rollback({ snapshotId: second.snapshotId, store, home }), { restored: true })
+  const restored = JSON.parse(await readFile(file, 'utf8'))
+  assert.deepEqual(restored, v1, '回滚必须恢复覆盖前的旧字节，不能删掉快照前已存在的包')
+  // 第一份快照（该文件是第一次 apply 新建的）回滚仍然删文件
+  assert.deepEqual(await readLedgerEntries(home, first.snapshotId), [{ path: file, existedBefore: false }])
+  assert.deepEqual(await rollback({ snapshotId: first.snapshotId, store, home }), { restored: true })
+  await assert.rejects(readFile(file, 'utf8'), { code: 'ENOENT' })
+})
+
+test('F1：覆盖前把旧字节备份进 <快照>/packs-backup/<basename>，原子写不留 .tmp', async () => {
+  const { home, second, file, v1 } = await seedOverwrite()
+  const backup = join(home, 'snapshots', second.snapshotId, 'packs-backup', v1.id + '.json')
+  assert.deepEqual(JSON.parse(await readFile(backup, 'utf8')), v1, '备份必须是覆盖前的旧字节')
+  assert.equal(await exists(join(home, 'snapshots', second.snapshotId, 'packs-backup')), true)
+  assert.deepEqual(await tempLeftovers(home), [])
+  // 备份小于 1MB（pack 本身受同一上限约束）
+  assert.ok((await stat(backup)).size < 1024 * 1024)
+  assert.equal(await exists(file), true)
+})
+
+test('F1：导出中途失败——既有文件内容不变、新建文件清理、台账删除（不留不可回滚记账）', async () => {
+  const existing = makePack()
+  const changed = makePack(makeMapV2())
+  const fresh = { ...makePack(makeMap(), ['deliver'], '全新包'), id: 'pack/bad-name' }
+  const existingProposal = packProposalFor(existing)
+  const freshProposal = packProposalFor(fresh)
+  const { home, store } = await seed({ proposals: makeProposals([existingProposal, freshProposal]), packs: packsDoc(existing) })
+  await apply({ ids: [existingProposal.id], store, home })
+  const existingFile = join(home, 'packs', existing.id + '.json')
+  const originalBytes = await readFile(existingFile)
+  // 第二次 apply：先覆盖既有包，再在全新包上失败（非法 pack id 让 exportPack 抛错）
+  await store.write('packs', packsDoc(changed, fresh))
+  const error = await apply({ ids: [existingProposal.id, freshProposal.id], store, home }).then(() => null, (err) => err)
+  assert.ok(error instanceof ApplyError)
+  assert.equal(error.code, 'APPLY_WRITE_FAILED')
+  assert.equal(typeof error.snapshotId, 'string')
+  assert.deepEqual(await readFile(existingFile), originalBytes, '已有包内容必须恢复成 apply 前的字节')
+  assert.equal(await exists(join(home, 'snapshots', error.snapshotId, 'packs-created.json')), false, '清理完成后台账必须删除')
+  assert.deepEqual(await tempLeftovers(home), [])
+  // 用错误里的快照回滚仍然安全：既有旧包不会被删
+  assert.deepEqual(await rollback({ snapshotId: error.snapshotId, store, home }), { restored: true })
+  assert.deepEqual(await readFile(existingFile), originalBytes)
+})
+
+test('F1：台账只覆盖本次目标——无关旧包回滚时原样保留', async () => {
+  const unrelated = makePack(makeMap(), ['deliver'], '无关旧包')
+  const pack = makePack()
+  const proposal = packProposalFor(pack)
+  const { home, store } = await seed({ proposals: makeProposals([proposal]), packs: packsDoc(pack) })
+  await mkdir(join(home, 'packs'), { recursive: true })
+  const unrelatedFile = join(home, 'packs', unrelated.id + '.json')
+  await writeFile(unrelatedFile, JSON.stringify(unrelated, null, 2) + '\n')
+  const applied = await apply({ ids: [proposal.id], store, home })
+  assert.deepEqual(await readLedgerPaths(home, applied.snapshotId), [join(home, 'packs', pack.id + '.json')])
+  await rollback({ snapshotId: applied.snapshotId, store, home })
+  assert.deepEqual(JSON.parse(await readFile(unrelatedFile, 'utf8')), unrelated)
+})
+
+test('F1：同一快照重复回滚幂等——恢复同字节，已删除的新建文件跳过', async () => {
+  const { home, store, second, file, v1 } = await seedOverwrite()
+  await rollback({ snapshotId: second.snapshotId, store, home })
+  const firstBytes = await readFile(file)
+  assert.deepEqual(JSON.parse(firstBytes.toString('utf8')), v1)
+  assert.deepEqual(await rollback({ snapshotId: second.snapshotId, store, home }), { restored: true })
+  assert.deepEqual(await readFile(file), firstBytes, '重复回滚恢复同一份旧字节')
+  assert.deepEqual(await tempLeftovers(home), [])
+})
+
+/* ------------------------------------------------- F2 内容一致性（修复契约 R-8A） */
+
+test('F2：apply 导出 store(packs) 里生成时的包，而不是用当前 map 重建', async () => {
+  const stored = makePack()
+  const rebuiltFromChanged = makePack(makeMapV2())
+  assert.equal(rebuiltFromChanged.id, stored.id, '同 id：模拟 /pack 后地图又变')
+  const proposal = packProposalFor(stored)
+  const { home, store } = await seed({ map: makeMapV2(), proposals: makeProposals([proposal]), packs: packsDoc(stored) })
+  await apply({ ids: [proposal.id], store, home })
+  const exported = JSON.parse(await readFile(join(home, 'packs', stored.id + '.json'), 'utf8'))
+  assert.deepEqual(exported, stored, '导出内容必须等于 /pack 时存储的 pack（含 createdAt/工具集）')
+  assert.notDeepEqual(exported.tools, rebuiltFromChanged.tools)
 })

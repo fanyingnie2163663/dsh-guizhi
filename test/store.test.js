@@ -45,7 +45,7 @@ test('write 后 read 读回同一值，落盘是格式化 JSON', async () => {
   assert.deepEqual(await tempLeftovers(home), [])
 })
 
-test('write 覆盖旧值；五个允许的 name 都能存（含 Task 7 新增的 selections）', async () => {
+test('write 覆盖旧值；六个允许的 name 都能存（含 selections 与 F2 的 packs）', async () => {
   const { store } = await makeStore()
   for (const name of [
     'scan',
@@ -53,6 +53,7 @@ test('write 覆盖旧值；五个允许的 name 都能存（含 Task 7 新增的
     'proposals',
     'sources',
     'selections',
+    'packs',
   ]) {
     await store.write(name, { name, round: 1 })
     assert.deepEqual(await store.read(name), { value: { name, round: 1 }, error: null })
@@ -79,24 +80,28 @@ test('read：损坏 JSON 返回 { value:null, error } 而不抛，文件保持�
   assert.equal(await readFile(join(home, 'scan.json'), 'utf8'), broken)
 })
 
-test('name 白名单：拒绝 pack 与路径穿越，不落盘', async () => {
+test('name 白名单：拒绝单数 pack 与路径穿越，不落盘', async () => {
   const { home, store } = await makeStore()
   await assert.rejects(store.write('pack', {}), /状态名/)
-  await assert.rejects(store.read('packs'), /状态名/)
+  await assert.rejects(store.read('package'), /状态名/)
   await assert.rejects(store.write('../scan', {}), /状态名/)
   await assert.rejects(store.read('scan/../../etc'), /状态名/)
   assert.deepEqual(await tempLeftovers(home), [])
 })
 
-test('selections：状态白名单新增 selections，可存可读并进快照', async () => {
+test('selections/packs：状态白名单新增 selections 与 packs，可存可读并进快照', async () => {
   const { home, store } = await makeStore()
   const selection = { selected: ['dev', 'research'], custom: '一句话场景' }
+  const packs = { packs: [{ id: 'pack-1', version: 1 }] }
   await store.write('selections', selection)
+  await store.write('packs', packs)
   assert.deepEqual(await store.read('selections'), { value: selection, error: null })
+  assert.deepEqual(await store.read('packs'), { value: packs, error: null })
   const snapshot = await store.snapshot('with-selections')
-  assert.deepEqual(snapshot.files, ['selections.json'])
+  assert.deepEqual(snapshot.files, ['packs.json', 'selections.json'])
   const copied = JSON.parse(await readFile(join(home, 'snapshots', snapshot.id, 'selections.json'), 'utf8'))
   assert.deepEqual(copied, selection)
+  assert.deepEqual(JSON.parse(await readFile(join(home, 'snapshots', snapshot.id, 'packs.json'), 'utf8')), packs)
 })
 
 test('write：不可序列化的值被拒绝并给出可读错误', async () => {

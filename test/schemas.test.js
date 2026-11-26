@@ -85,14 +85,14 @@ function failing(result) {
   return result.errors
 }
 
-test('schemas 导出 scan/map/pack/proposals/selections 五个 { validate } 校验器', () => {
-  for (const name of ['scan', 'map', 'pack', 'proposals', 'selections']) {
+test('schemas 导出 scan/map/pack/proposals/selections/packs 六个 { validate } 校验器', () => {
+  for (const name of ['scan', 'map', 'pack', 'proposals', 'selections', 'packs']) {
     assert.equal(typeof schemas[name]?.validate, 'function', name + '.validate 必须是函数')
   }
 })
 
-test('五个校验器对非对象输入返回失败而不是抛错', () => {
-  for (const name of ['scan', 'map', 'pack', 'proposals', 'selections']) {
+test('六个校验器对非对象输入返回失败而不是抛错', () => {
+  for (const name of ['scan', 'map', 'pack', 'proposals', 'selections', 'packs']) {
     for (const value of [null, undefined, 'text', 42, [], true]) {
       const result = schemas[name].validate(value)
       assert.equal(result.ok, false, name + ' 应拒绝 ' + JSON.stringify(value))
@@ -327,6 +327,31 @@ test('errors 稳定：同一输入两次校验产生相同的独立错误数组'
 function validSelections() {
   return { selected: ['dev', 'content'], custom: '给客户做技术方案' }
 }
+
+/** @returns {object} a packs state document that satisfies the F2 shape. */
+function validPacks() {
+  return { packs: [validPack()] }
+}
+
+test('packs：{packs:[pack]} 通过；每项按 schemas.pack 严格校验、顶层封闭', () => {
+  assert.deepEqual(schemas.packs.validate(validPacks()), { ok: true, errors: [] })
+  assert.deepEqual(schemas.packs.validate({ packs: [] }), { ok: true, errors: [] })
+
+  // 顶层必须是对象且只允许 packs 一个键
+  assert.ok(failing(schemas.packs.validate({ packs: [], extra: true })).some((message) => message.includes('未知字段') && message.includes('extra')))
+  assert.ok(failing(schemas.packs.validate({ entries: [] })).some((message) => message.includes('packs')))
+  assert.ok(failing(schemas.packs.validate([])).some((message) => message.includes('对象')))
+
+  // packs 必须是数组、每项复用 pack 校验器（路径带 packs[i].）
+  assert.ok(failing(schemas.packs.validate({ packs: 'x' })).some((message) => message.includes('packs')))
+  assert.ok(failing(schemas.packs.validate({ packs: [null] })).some((message) => message.includes('packs[0]')))
+  const badItem = validPack()
+  badItem.version = 2
+  assert.ok(failing(schemas.packs.validate({ packs: [validPack(), badItem] })).some((message) => message.includes('packs[1].version')))
+  const badStageIds = validPack()
+  badStageIds.stageIds = ['understand', 7]
+  assert.ok(failing(schemas.packs.validate({ packs: [badStageIds] })).some((message) => message.includes('packs[0].stageIds[1]')))
+})
 
 test('selections：合法选择通过；严格封闭对象，selected/custom 必填且类型正确', () => {
   assert.deepEqual(schemas.selections.validate(validSelections()), { ok: true, errors: [] })
