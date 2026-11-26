@@ -20,7 +20,8 @@
   <a href="#安装">安装</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#数据与隐私">数据与隐私</a> ·
-  <a href="#开发">开发</a>
+  <a href="#开发">开发</a> ·
+  <a href="#参与与支持">参与与支持</a>
 </p>
 
 ---
@@ -224,6 +225,12 @@ test/          node:test：单元 + 路由 + HTTP 适配 + e2e
 - 宿主 API 笔记：[`docs/host-notes.md`](docs/host-notes.md)
 - 演示与验收：[`docs/DEMO.md`](docs/DEMO.md)
 - UI 静态预览：[`docs/ui-preview.html`](docs/ui-preview.html)
+
+## 参与与支持
+
+- **欢迎 PR**：bug 修复、文档修正、新的场景与公共目录源，以及 [状态与已知限制](#状态与已知限制) 里 v1.1 backlog 的任何一项都欢迎。较大的改动建议先开 issue 对一下方向；提交前跑一遍 `node --test test/*.test.js`（322 个测试），保持全绿。
+- **点个 Star**：如果归置帮你理清了插件、工具和技能，欢迎给 [fanyingnie2163663/dsh-guizhi](https://github.com/fanyingnie2163663/dsh-guizhi) 点个 ⭐。对这类小工具来说，star 是「继续维护」最直接的信号，也能让更多需要它的人发现它。
+- **反馈问题**：用 [GitHub Issues](https://github.com/fanyingnie2163663/dsh-guizhi/issues) 提，附上 DSH 版本、`node -v`、复现步骤和截图更好；真机验收清单见 [`docs/DEMO.md`](docs/DEMO.md) §4。
 
 ## License
 
