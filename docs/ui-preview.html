@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>归置面板 · 静态视觉预览（非真实面板）</title>
+<!-- 静态视觉预览：数据为示例，不参与插件运行、不被测试引用。真实面板由 client.js 注入样式并轮询 GET api/guizhi/state。 -->
+<style>
+.gz-root{--gz-fb-bg:#ffffff;--gz-fb-card:#f7f8fa;--gz-fb-text:#1f2328;--gz-fb-text-2:#59606b;--gz-fb-text-3:#8b919c;--gz-fb-border:rgba(31,35,40,.16);--gz-fb-border-soft:rgba(31,35,40,.09);--gz-fb-hover:rgba(31,35,40,.055);--gz-fb-accent:#2563eb;--gz-fb-accent-ink:#ffffff;--gz-fb-focus:#2563eb;--gz-fb-mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;--gz-fb-ok:#15803d;--gz-fb-warn:#b45309;--gz-fb-danger:#b91c1c;--gz-bg:var(--dsw-alias-bg-base,var(--gz-fb-bg));--gz-card-bg:var(--gz-fb-card);--gz-text:var(--dsw-alias-label-primary,var(--gz-fb-text));--gz-text-2:var(--dsw-alias-label-secondary,var(--gz-fb-text-2));--gz-text-3:var(--dsw-alias-label-tertiary,var(--gz-fb-text-3));--gz-border:var(--dsw-alias-border-l2,var(--gz-fb-border));--gz-border-soft:var(--dsw-alias-border-l3,var(--gz-fb-border-soft));--gz-hover:var(--dsw-alias-interactive-bg-hover,var(--gz-fb-hover));--gz-tint:var(--gz-fb-hover);--gz-accent:var(--dsw-alias-state-business-primary,var(--gz-fb-accent));--gz-accent-ink:var(--dsw-alias-label-primary-inverted,var(--gz-fb-accent-ink));--gz-focus:var(--dsw-focus-ring-color,var(--gz-fb-focus));--gz-focus-w:var(--dsw-focus-ring-width,2px);--gz-radius-sm:var(--dsw-radius-sm,8px);--gz-radius-md:var(--dsw-radius-md,12px);--gz-mono:var(--ds-font-family-code,var(--gz-fb-mono));--gz-ease:var(--ds-ease-in-out,cubic-bezier(.2,.7,.3,1));--gz-ok:var(--gz-fb-ok);--gz-warn:var(--gz-fb-warn);--gz-danger:var(--gz-fb-danger);display:flex;flex-direction:column;box-sizing:border-box;height:100%;min-width:264px;padding:20px 22px 0;color:var(--gz-text);background:var(--gz-bg);overflow:auto;font:13px/1.5 var(--dsw-font-family,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif);container-type:inline-size;container-name:gz;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2,var(--gz-fb-border-soft)) transparent}
+.gz-root *{box-sizing:border-box}
+.gz-root ::selection{background:var(--gz-tint)}
+.gz-root .gz-ico{display:block;flex:0 0 auto}
+.gz-head{display:flex;flex-direction:column;gap:7px;padding-bottom:14px;border-bottom:1px solid var(--gz-border-soft);flex:0 0 auto}
+.gz-brandbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.gz-brand{display:flex;align-items:center;gap:10px;min-width:0}
+.gz-brand-mark{display:inline-flex;align-items:center;justify-content:center;width:33px;height:33px;border-radius:10px;background:var(--gz-accent);color:var(--gz-accent-ink);flex:0 0 auto;box-shadow:0 1px 2px rgba(0,0,0,.14)}
+.gz-brand-mark .gz-ico{width:18px;height:18px}
+.gz-brand-text{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.gz-title{margin:0;font-size:20px;line-height:1.2;font-weight:650;letter-spacing:.03em;color:var(--gz-text)}
+.gz-wordmark{font-size:10px;line-height:1.6;letter-spacing:.16em;text-transform:uppercase;color:var(--gz-text-3);border:1px solid var(--gz-border-soft);border-radius:999px;padding:0 7px}
+.gz-head-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.gz-sys{display:inline-flex;align-items:center;gap:6px;font-size:11px;line-height:1.6;color:var(--gz-text-2);padding:2px 9px 2px 8px;border:1px solid var(--gz-border-soft);border-radius:999px;background:var(--gz-card-bg);white-space:nowrap}
+.gz-sys-dot{width:7px;height:7px;border-radius:50%;background:var(--gz-text-3);flex:0 0 auto;transition:background-color 140ms var(--gz-ease)}
+.gz-sys-ready .gz-sys-dot{background:var(--gz-ok);box-shadow:0 0 0 3px rgba(22,163,74,.14)}
+.gz-sys-loading .gz-sys-dot{background:var(--gz-warn);box-shadow:0 0 0 3px rgba(217,119,6,.14);animation:gz-pulse 1.3s ease-in-out infinite}
+.gz-sys-error .gz-sys-dot{background:var(--gz-danger);box-shadow:0 0 0 3px rgba(220,38,38,.14)}
+.gz-sub{margin:0;font-size:12px;line-height:1.55;color:var(--gz-text-2);max-width:62ch}
+.gz-sub-note{color:var(--gz-text-3)}
+.gz-navrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:12px;flex-wrap:wrap}
+.gz-tabs{position:relative;display:flex;align-items:stretch;gap:2px;padding:3px;border:1px solid var(--gz-border-soft);border-radius:12px;background:var(--gz-card-bg);flex:0 1 auto;min-width:0}
+.gz-tab{position:relative;z-index:1;flex:1 1 auto;min-width:58px;border:0;background:transparent;color:var(--gz-text-2);font:inherit;font-size:12.5px;font-weight:500;line-height:1.4;padding:6px 15px;border-radius:9px;cursor:pointer;transition:color 140ms var(--gz-ease)}
+.gz-tab:hover{color:var(--gz-text)}
+.gz-tab:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px}
+.gz-tab-on{color:var(--gz-text);font-weight:650}
+.gz-tab-ind{position:absolute;z-index:0;top:3px;bottom:3px;left:3px;width:calc((100% - 6px)/3);border-radius:9px;background:var(--gz-bg);border:1px solid var(--gz-border-soft);box-shadow:0 1px 2px rgba(0,0,0,.08);transition:transform 160ms var(--gz-ease)}
+.gz-badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.gz-badge{display:inline-flex;align-items:baseline;gap:5px;font-size:10.5px;line-height:1.7;color:var(--gz-text-2);background:var(--gz-card-bg);border:1px solid var(--gz-border-soft);border-radius:999px;padding:0 9px;white-space:nowrap}
+.gz-badge-num{font-size:12px;font-weight:650;color:var(--gz-text);font-variant-numeric:tabular-nums}
+.gz-body{display:flex;flex-direction:column;gap:14px;flex:1 0 auto;min-height:0;padding:16px 0 6px}
+.gz-panel{display:flex;flex-direction:column;gap:14px;outline:none;animation:gz-fade 150ms var(--gz-ease)}
+.gz-section{display:flex;flex-direction:column;gap:12px}
+.gz-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.gz-section-title{margin:0;font-size:14px;font-weight:650;letter-spacing:.01em;color:var(--gz-text)}
+.gz-meta{font-size:11px;color:var(--gz-text-3);font-variant-numeric:tabular-nums}
+.gz-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.gz-card{position:relative;display:flex;flex-direction:column;gap:5px;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);padding:12px 13px 11px;background:var(--gz-card-bg);overflow:hidden;transition:border-color 140ms var(--gz-ease),background-color 140ms var(--gz-ease)}
+.gz-card::before{content:"";position:absolute;top:0;bottom:0;left:0;width:3px;background:var(--gz-accent);opacity:.7}
+.gz-card:hover{border-color:var(--gz-border)}
+.gz-card-top{display:flex;align-items:center;gap:6px;color:var(--gz-text-2);min-width:0}
+.gz-card-icon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;background:var(--gz-tint);color:var(--gz-accent);flex:0 0 auto}
+.gz-card-label{font-size:11px;font-weight:500;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gz-card-num{font-size:26px;line-height:1.05;font-weight:660;letter-spacing:-.01em;color:var(--gz-text);font-variant-numeric:tabular-nums}
+.gz-card-hint{font-size:10px;line-height:1.45;color:var(--gz-text-3)}
+.gz-card[data-tone=warn]::before{background:var(--gz-warn)}
+.gz-card[data-tone=warn] .gz-card-icon{background:rgba(217,119,6,.13);color:var(--gz-warn)}
+.gz-card[data-tone=warn] .gz-card-num{color:var(--gz-warn)}
+.gz-note{display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.55;color:var(--gz-text-2);background:var(--gz-tint);border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-sm);padding:7px 10px}
+.gz-note .gz-ico{margin-top:1px;color:var(--gz-warn)}
+.gz-details{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-sm);background:var(--gz-card-bg);padding:0 11px}
+.gz-details[open]{padding-bottom:8px}
+.gz-details>summary{display:flex;align-items:center;gap:6px;cursor:pointer;list-style:none;padding:8px 0;font-size:11px;line-height:1.4;color:var(--gz-text-2)}
+.gz-details>summary::-webkit-details-marker{display:none}
+.gz-details>summary .gz-ico{color:var(--gz-text-3);transition:transform 140ms var(--gz-ease)}
+.gz-details[open]>summary .gz-ico{transform:rotate(180deg)}
+.gz-details>summary:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px;border-radius:4px}
+.gz-warn-list{margin:0;padding-left:16px;display:flex;flex-direction:column;gap:3px;font-size:11px;line-height:1.5;color:var(--gz-warn)}
+.gz-warn-list li{word-break:break-word}
+.gz-table-card{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);overflow:hidden;background:var(--gz-card-bg)}
+.gz-table-scroll{max-height:52vh;overflow:auto;overscroll-behavior:contain}
+.gz-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
+.gz-table th{position:sticky;top:0;z-index:1;text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.04em;color:var(--gz-text-3);background:var(--gz-card-bg);padding:9px 12px;border-bottom:1px solid var(--gz-border-soft);white-space:nowrap}
+.gz-table td{padding:8px 12px;border-bottom:1px solid var(--gz-border-soft);vertical-align:middle}
+.gz-table tbody tr{transition:background-color 120ms var(--gz-ease)}
+.gz-table tbody tr:hover{background:var(--gz-hover)}
+.gz-table tbody tr:last-child td{border-bottom:none}
+.gz-tool-name{font-family:var(--gz-mono);font-size:12px;white-space:nowrap;color:var(--gz-text)}
+.gz-owners{display:inline-flex;flex-wrap:wrap;gap:4px;max-width:100%}
+.gz-owner-chip{display:inline-block;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;line-height:1.8;padding:0 7px;border-radius:999px;border:1px solid var(--gz-border-soft);background:var(--gz-bg);color:var(--gz-text-2)}
+.gz-owner-none{color:var(--gz-text-3)}
+.gz-usage{display:flex;align-items:center;gap:8px;min-width:108px}
+.gz-usage-bar{position:relative;flex:1 1 auto;min-width:38px;height:6px;border-radius:999px;background:var(--gz-tint);overflow:hidden}
+.gz-usage-fill{display:block;height:100%;border-radius:999px;background:var(--gz-accent);opacity:.8;transition:width 180ms var(--gz-ease)}
+.gz-usage-num{font-size:12px;color:var(--gz-text-2);font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}
+.gz-unknown{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--gz-text-3);background:var(--gz-tint);border:1px solid var(--gz-border-soft);border-radius:999px;padding:0 8px;line-height:1.7;cursor:help;white-space:nowrap}
+.gz-empty{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:24px 20px;border:1px dashed var(--gz-border);border-radius:var(--gz-radius-md);background:var(--gz-card-bg);color:var(--gz-text-2);font-size:12.5px}
+.gz-empty-icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;background:var(--gz-tint);color:var(--gz-text-2)}
+.gz-empty p{margin:0;max-width:62ch;line-height:1.6}
+.gz-empty strong{color:var(--gz-text);font-weight:650}
+.gz-skel{display:flex;flex-direction:column;gap:12px}
+.gz-skel-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.gz-skel-block{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:linear-gradient(90deg,var(--gz-card-bg) 25%,var(--gz-hover) 37%,var(--gz-card-bg) 63%);background-size:400% 100%;animation:gz-shimmer 1.4s linear infinite}
+.gz-skel-card{height:88px}
+.gz-skel-rows{display:flex;flex-direction:column;gap:1px;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);overflow:hidden;background:var(--gz-card-bg)}
+.gz-skel-row{height:35px;margin:1px 12px;border-radius:6px;background:linear-gradient(90deg,var(--gz-card-bg) 25%,var(--gz-hover) 37%,var(--gz-card-bg) 63%);background-size:400% 100%;animation:gz-shimmer 1.4s linear infinite}
+.gz-chips{display:flex;flex-wrap:wrap;gap:8px}
+.gz-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--gz-border);border-radius:999px;background:var(--gz-bg);color:var(--gz-text-2);font:inherit;font-size:12.5px;line-height:1.4;padding:6px 13px;cursor:pointer;transition:background-color 140ms var(--gz-ease),border-color 140ms,color 140ms,transform 140ms}
+.gz-chip:hover{background:var(--gz-hover);color:var(--gz-text)}
+.gz-chip:active{transform:scale(.98)}
+.gz-chip:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px}
+.gz-chip .gz-chip-check{display:none;color:var(--gz-accent)}
+.gz-chip-on{background:var(--gz-tint);border-color:var(--gz-accent);color:var(--gz-accent);font-weight:600;box-shadow:inset 0 0 0 1px var(--gz-accent)}
+.gz-chip-on .gz-chip-check{display:inline-flex}
+.gz-chip-on .gz-chip-icon{color:var(--gz-accent)}
+.gz-chip-icon{display:inline-flex;color:var(--gz-text-3)}
+.gz-field{display:flex;flex-direction:column;gap:6px}
+.gz-input{width:100%;border:1px solid var(--gz-border);border-radius:var(--gz-radius-sm);background:var(--gz-bg);color:var(--gz-text);font:inherit;font-size:12.5px;line-height:1.55;padding:8px 11px;resize:vertical;transition:border-color 140ms var(--gz-ease),box-shadow 140ms var(--gz-ease)}
+.gz-input::placeholder{color:var(--gz-text-3)}
+.gz-input:hover{border-color:var(--gz-text-3)}
+.gz-input:focus-visible{outline:none;border-color:var(--gz-focus);box-shadow:0 0 0 calc(var(--gz-focus-w) - 1px) var(--gz-focus)}
+.gz-input-inline{width:auto;flex:1 1 150px;min-width:110px;max-width:230px;padding:5px 9px;font-size:11.5px}
+.gz-counter{display:flex;justify-content:flex-end;gap:8px;font-size:11px;line-height:1.5;color:var(--gz-text-3);font-variant-numeric:tabular-nums}
+.gz-counter-warn{color:var(--gz-warn);font-weight:600}
+.gz-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.gz-actions-flush{border:0;padding:0}
+.gz-saved{font-size:11px;line-height:1.55;color:var(--gz-text-3);word-break:break-word;flex:1 1 200px;min-width:0}
+.gz-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--gz-border);border-radius:var(--gz-radius-sm);background:var(--gz-bg);color:var(--gz-text);font:inherit;font-size:12.5px;font-weight:500;line-height:1.2;padding:7px 13px;cursor:pointer;white-space:nowrap;transition:background-color 140ms var(--gz-ease),border-color 140ms,color 140ms,box-shadow 140ms,transform 100ms}
+.gz-btn:hover{background:var(--gz-hover)}
+.gz-btn:active{transform:translateY(1px)}
+.gz-btn:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px}
+.gz-btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.gz-btn-primary{background:var(--gz-accent);border-color:var(--gz-accent);color:var(--gz-accent-ink);font-weight:600}
+.gz-btn-primary:hover{background:var(--gz-accent);filter:brightness(1.07)}
+.gz-btn-primary:disabled{filter:none}
+.gz-map-meta{margin:0;font-size:11.5px;line-height:1.55;color:var(--gz-text-3);word-break:break-word}
+.gz-timeline{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.gz-stage{position:relative;display:flex;gap:12px;padding-bottom:12px}
+.gz-stage:last-child{padding-bottom:0}
+.gz-stage-marker{position:relative;flex:0 0 auto;width:26px;display:flex;justify-content:center;padding-top:11px}
+.gz-stage-marker::before{content:"";position:absolute;top:34px;bottom:-12px;left:50%;width:2px;transform:translateX(-50%);background:var(--gz-border-soft)}
+.gz-stage:last-child .gz-stage-marker::before{display:none}
+.gz-stage-num{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--gz-bg);border:1px solid var(--gz-border);color:var(--gz-text-2);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+.gz-stage-body{flex:1 1 auto;min-width:0;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:var(--gz-card-bg);padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.gz-stage-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.gz-stage-title{margin:0;font-size:13.5px;font-weight:650;color:var(--gz-text)}
+.gz-stage-id{font-family:var(--gz-mono);font-size:10px;line-height:1.8;color:var(--gz-text-3);background:var(--gz-tint);border-radius:999px;padding:0 7px}
+.gz-stage-count{margin-left:auto;font-size:10.5px;color:var(--gz-text-3)}
+.gz-stage-empty{margin:0;font-size:11.5px;color:var(--gz-text-3)}
+.gz-caps{display:flex;flex-direction:column;gap:6px}
+.gz-cap-block{display:flex;flex-direction:column;gap:6px}
+.gz-cap{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:1px solid var(--gz-border-soft);border-radius:999px;background:var(--gz-bg);color:var(--gz-text);font:inherit;font-size:12px;line-height:1.4;padding:5px 11px 5px 7px;cursor:pointer;transition:background-color 140ms var(--gz-ease),border-color 140ms,box-shadow 140ms}
+.gz-cap:hover{background:var(--gz-hover);border-color:var(--gz-border)}
+.gz-cap:focus-visible{outline:var(--gz-focus-w) solid var(--gz-focus);outline-offset:2px}
+.gz-cap-icon{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border-radius:50%;flex:0 0 auto;background:var(--gz-tint);color:var(--gz-text-2)}
+.gz-cap-title{flex:1 1 auto;min-width:0;word-break:break-word}
+.gz-cap-status{flex:0 0 auto;font-size:10px;line-height:1.8;font-weight:600;padding:0 8px;border-radius:999px;background:var(--gz-tint);color:var(--gz-text-2);white-space:nowrap}
+.gz-cap-status::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;margin-right:4px;vertical-align:middle;background:currentColor;opacity:.9}
+.gz-cap-chevron{display:inline-flex;color:var(--gz-text-3);transition:transform 140ms var(--gz-ease)}
+.gz-cap[aria-expanded=true] .gz-cap-chevron{transform:rotate(180deg)}
+.gz-cap-have .gz-cap-icon{background:rgba(22,163,74,.14);color:var(--gz-ok)}
+.gz-cap-have .gz-cap-status{background:rgba(22,163,74,.12);color:var(--gz-ok)}
+.gz-cap-missing .gz-cap-icon{background:rgba(217,119,6,.15);color:var(--gz-warn)}
+.gz-cap-missing .gz-cap-status{background:rgba(217,119,6,.13);color:var(--gz-warn)}
+.gz-cap-redundant .gz-cap-icon{background:var(--gz-tint);color:var(--gz-text-3)}
+.gz-cap-redundant .gz-cap-title{color:var(--gz-text-2)}
+.gz-evidence{margin:0 0 2px 27px;padding:2px 0 2px 12px;border-left:2px solid var(--gz-border-soft);animation:gz-fade 140ms var(--gz-ease)}
+.gz-evidence-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(120px,100%),1fr));gap:4px 16px;margin:0}
+.gz-evidence-row{display:flex;flex-direction:column;gap:1px;min-width:0;padding:3px 0}
+.gz-evidence-key{font-size:10px;line-height:1.5;color:var(--gz-text-3);letter-spacing:.02em}
+.gz-evidence-val{font-size:11.5px;line-height:1.5;color:var(--gz-text-2);word-break:break-word}
+.gz-evidence-empty{margin:0;font-size:11.5px;color:var(--gz-text-3);padding:2px 0}
+.gz-actionbar{position:sticky;bottom:-4px;z-index:3;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:var(--gz-bg);box-shadow:0 -8px 20px -14px rgba(0,0,0,.3)}
+.gz-actionbar-main{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.gz-actionbar-snap{display:flex;flex-wrap:wrap;gap:7px;align-items:center;padding-top:8px;border-top:1px dashed var(--gz-border-soft)}
+.gz-snap-label{font-size:10.5px;color:var(--gz-text-3);letter-spacing:.02em;white-space:nowrap}
+.gz-result{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:var(--gz-card-bg);padding:12px 14px;display:flex;flex-direction:column;gap:10px;animation:gz-fade 150ms var(--gz-ease)}
+.gz-result-head{display:flex;align-items:flex-start;gap:9px}
+.gz-result-icon{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--gz-tint);color:var(--gz-text-2)}
+.gz-result[data-tone=success] .gz-result-icon{background:rgba(22,163,74,.14);color:var(--gz-ok)}
+.gz-result[data-tone=warn] .gz-result-icon{background:rgba(217,119,6,.14);color:var(--gz-warn)}
+.gz-result-headings{display:flex;flex-direction:column;gap:1px;min-width:0}
+.gz-result-kicker{font-size:9.5px;line-height:1.5;letter-spacing:.1em;color:var(--gz-text-3)}
+.gz-result-title{margin:0;font-size:12.5px;font-weight:650;line-height:1.45;color:var(--gz-text);word-break:break-word}
+.gz-result-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;border-top:1px solid var(--gz-border-soft)}
+.gz-result-item{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;padding:7px 0;border-bottom:1px solid var(--gz-border-soft);font-size:12px}
+.gz-result-item:last-child{border-bottom:none}
+.gz-kind-chip{flex:0 0 auto;font-size:10px;font-weight:600;line-height:1.8;color:var(--gz-text-2);background:var(--gz-tint);border:1px solid var(--gz-border-soft);border-radius:999px;padding:0 7px;white-space:nowrap}
+.gz-result-item-title{flex:1 1 auto;min-width:0;word-break:break-word}
+.gz-result-effect{font-size:11px;color:var(--gz-text-3);word-break:break-word}
+.gz-result-meta{margin:0;font-size:11.5px;line-height:1.55;color:var(--gz-text-2);word-break:break-word}
+.gz-hash{font-family:var(--gz-mono);font-size:11px;background:var(--gz-tint);border-radius:6px;padding:1px 6px;color:var(--gz-text-2);word-break:break-all}
+.gz-result-ok{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--gz-ok)}
+.gz-result-err{display:flex;align-items:flex-start;gap:6px;margin:0;font-size:11.5px;line-height:1.5;color:var(--gz-danger);word-break:break-word}
+.gz-result-err .gz-ico{margin-top:2px}
+.gz-draft{min-height:120px;font-family:var(--gz-mono);font-size:11.5px;line-height:1.55}
+.gz-banner{display:flex;align-items:flex-start;gap:9px;border-radius:var(--gz-radius-md);padding:10px 12px;font-size:12px;line-height:1.5;animation:gz-fade 150ms var(--gz-ease)}
+.gz-banner .gz-ico{margin-top:2px}
+.gz-banner-error{border:1px solid rgba(220,38,38,.4);background:rgba(220,38,38,.08);color:var(--gz-danger)}
+.gz-banner-warn{border:1px solid rgba(217,119,6,.32);background:rgba(217,119,6,.07);color:var(--gz-text-2)}
+.gz-banner-body{display:flex;flex-direction:column;gap:4px;min-width:0}
+.gz-banner-body strong{font-size:12px;font-weight:650;color:var(--gz-text)}
+.gz-banner-text{min-width:0;word-break:break-word}
+.gz-banner-hint{font-size:10.5px;line-height:1.5;color:var(--gz-text-3);flex:0 1 auto}
+.gz-status{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-height:34px;padding:9px 0 11px;margin-top:2px;border-top:1px solid var(--gz-border-soft);font-size:11px;line-height:1.5;color:var(--gz-text-3);flex:0 0 auto}
+.gz-status-ok{color:var(--gz-ok);font-weight:600}
+.gz-status-warn{color:var(--gz-warn);font-weight:600}
+.gz-status-error{color:var(--gz-danger);font-weight:600;word-break:break-word}
+.gz-status-ver{margin-left:auto;font-family:var(--gz-mono);font-size:10.5px;color:var(--gz-text-3)}
+.gz-hint{font-size:11px;line-height:1.55;color:var(--gz-text-3);word-break:break-word}
+@keyframes gz-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes gz-fade{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}
+@keyframes gz-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
+@container gz (max-width:520px){.gz-cards,.gz-skel-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.gz-card-num{font-size:23px}.gz-tab{padding:6px 11px}.gz-badges{gap:5px}}
+@container gz (max-width:340px){.gz-card-hint{display:none}.gz-badge{padding:0 7px}.gz-btn{padding:6px 10px}.gz-actionbar{padding:9px 10px}.gz-snap-label{display:none}.gz-input-inline{max-width:none}.gz-cap{gap:6px;padding:5px 9px 5px 6px}.gz-cap-status{font-size:9.5px;padding:0 6px}.gz-stage-body{padding:10px 11px}.gz-stage-head{gap:6px}.gz-stage-count{display:none}.gz-evidence{margin-left:14px;padding-left:10px}}
+@container gz (max-width:440px){.gz-table th,.gz-table td{padding:8px 9px}.gz-card{padding:11px 11px 10px}.gz-title{font-size:19px}.gz-evidence-grid{gap:4px 12px}.gz-owner-chip{max-width:104px}.gz-usage{min-width:84px}.gz-table{font-size:12px}.gz-tool-name{font-size:11.5px}}
+@container gz (max-width:330px){.gz-table thead{display:none}.gz-table,.gz-table tbody{display:block}.gz-table tr{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;padding:8px 10px;border-bottom:1px solid var(--gz-border-soft)}.gz-table tbody tr:last-child{border-bottom:none}.gz-table tbody tr:hover{background:var(--gz-hover)}.gz-table td{display:block;border:0;padding:0}.gz-table td:nth-child(1){flex:1 1 auto;min-width:0}.gz-table td:nth-child(2){order:3;flex:1 1 100%}.gz-table td:nth-child(3){flex:0 0 auto}.gz-usage-bar{min-width:26px}}
+@media (prefers-reduced-motion:reduce){.gz-root,.gz-root *,.gz-root *::before,.gz-root *::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+[data-theme=dark] .gz-root{--gz-fb-bg:#101216;--gz-fb-card:#171a21;--gz-fb-text:#e8eaed;--gz-fb-text-2:#a7aeb9;--gz-fb-text-3:#7f8794;--gz-fb-border:rgba(232,234,237,.18);--gz-fb-border-soft:rgba(232,234,237,.1);--gz-fb-hover:rgba(232,234,237,.07);--gz-fb-accent:#60a5fa;--gz-fb-accent-ink:#0b1220;--gz-fb-focus:#60a5fa;--gz-fb-ok:#4ade80;--gz-fb-warn:#fbbf24;--gz-fb-danger:#f87171}
+html,body{margin:0;padding:0}
+body{--pv-page:#eef1f5;--pv-ink:#0f172a;--pv-muted:#64748b;background:var(--pv-page);color:var(--pv-ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
+body[data-theme=dark]{--pv-page:#0b0d12;--pv-ink:#e8eaed;--pv-muted:#94a3b8}
+[hidden]{display:none!important}
+.pv-banner{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:10px 18px;background:#111827;color:#f9fafb;font-size:12px;line-height:1.5;box-shadow:0 1px 0 rgba(255,255,255,.06)}
+body[data-theme=dark] .pv-banner{background:#161b22}
+.pv-badge{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:9.5px;font-weight:700;letter-spacing:.14em;color:#fbbf24;border:1px solid rgba(251,191,36,.55);border-radius:999px;padding:1px 8px;white-space:nowrap}
+.pv-banner strong{font-weight:600}
+.pv-banner .pv-spacer{flex:1 1 auto}
+.pv-controls{display:flex;gap:8px;flex-wrap:wrap}
+.pv-btn{border:1px solid rgba(255,255,255,.28);background:transparent;color:inherit;font:inherit;font-size:11.5px;line-height:1.4;padding:4px 11px;border-radius:999px;cursor:pointer;transition:background-color .14s ease,color .14s ease}
+.pv-btn:hover{background:rgba(255,255,255,.12)}
+.pv-btn:focus-visible{outline:2px solid #fbbf24;outline-offset:2px}
+.pv-btn[aria-pressed=true]{background:#f9fafb;color:#111827;font-weight:600;border-color:#f9fafb}
+.pv-stage{padding:18px 18px 4px}
+.pv-stage .gz-root{height:auto;min-height:780px;width:420px;max-width:420px;min-width:264px;margin:0 auto;padding-bottom:0;overflow:visible;border:1px solid rgba(15,23,42,.12);border-radius:18px;box-shadow:0 24px 60px -36px rgba(15,23,42,.55)}
+body[data-theme=dark] .pv-stage .gz-root{border-color:rgba(232,234,237,.14);box-shadow:0 24px 60px -30px rgba(0,0,0,.8)}
+.pv-stage.pv-narrow .gz-root{width:264px;max-width:264px;min-width:264px;min-height:900px;margin:0 auto}
+.pv-note{max-width:640px;margin:14px auto 30px;padding:0 4px;font-size:11.5px;line-height:1.7;color:var(--pv-muted);text-align:center}
+.pv-note code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}
+.pv-stage{display:flex;justify-content:center;align-items:flex-start}
+@media (prefers-reduced-motion:reduce){.pv-btn{transition:none}}
+</style>
+</head>
+<body data-theme="light">
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true" focusable="false"><symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3.6 20 8l-8 4.4L4 8l8-4.4Z"></path><path d="M4 12.2 12 16.6l8-4.4"></path><path d="M4 16.2 12 20.6l8-4.4"></path></symbol><symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"></rect></symbol><symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.6 6.4a3.6 3.6 0 0 0-4.7 4.5L4 16.8 7.2 20l5.9-5.9a3.6 3.6 0 0 0 4.5-4.7l-2.2 2.2-2.4-.6-.6-2.4 2.2-2.2Z"></path></symbol><symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M11 3.8 12.6 7.6 16.4 9.2 12.6 10.8 11 14.6 9.4 10.8 5.6 9.2 9.4 7.6 11 3.8Z"></path><path d="M17.4 13.6 18.3 15.7 20.4 16.6 18.3 17.5 17.4 19.6 16.5 17.5 14.4 16.6 16.5 15.7 17.4 13.6Z"></path></symbol><symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 7.4V12l3.1 2"></path></symbol><symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"></path><path d="M20 4.4v4.8h-4.8"></path></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="M4.8 12.4 9 16.6 19.2 6.4"></path></symbol><symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4.4 20.4 19.2H3.6L12 4.4Z"></path><path d="M12 9.8v4.2"></path><circle cx="12" cy="16.7" r="0.8" fill="currentColor" stroke="none"></circle></symbol><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"></circle><path d="M12 11v5.2"></path><circle cx="12" cy="7.8" r="0.8" fill="currentColor" stroke="none"></circle></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="M7.6 9.8 12 14.2l4.4-4.4"></path></symbol><symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20.2h4L19.4 8.8l-4.2-4.2L4 16.2v4Z"></path><path d="M13.4 6.4l4.2 4.2"></path></symbol><symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3.2a8.8 8.8 0 0 0 0 17.6h1.4a2.4 2.4 0 0 0 1.1-4.5 1.9 1.9 0 0 1 1-3.6h1.9a3 3 0 0 0 3-3A8.8 8.8 0 0 0 12 3.2Z"></path><circle cx="8.2" cy="10.2" r="0.9" fill="currentColor" stroke="none"></circle><circle cx="12.2" cy="7.8" r="0.9" fill="currentColor" stroke="none"></circle><circle cx="15.8" cy="10.4" r="0.9" fill="currentColor" stroke="none"></circle></symbol><symbol id="i-code" viewBox="0 0 24 24"><path d="M9 7.4 4.4 12 9 16.6"></path><path d="M15 7.4 19.6 12 15 16.6"></path></symbol><symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.4"></circle><path d="M15.8 15.8 20 20"></path></symbol><symbol id="i-briefcase" viewBox="0 0 24 24"><rect x="3.6" y="7.2" width="16.8" height="11.8" rx="2"></rect><path d="M9 7.2V5.6A1.6 1.6 0 0 1 10.6 4h2.8A1.6 1.6 0 0 1 15 5.6v1.6"></path><path d="M3.6 12.4h16.8"></path></symbol><symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2.6v2.2M12 19.2v2.2M4.4 12H2.2M21.8 12h-2.2M5.8 5.8l1.6 1.6M16.6 16.6l1.6 1.6M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6"></path></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3.4 20 7.8v8.4L12 20.6 4 16.2V7.8l8-4.4Z"></path><path d="M4 7.8 12 12.2l8-4.4M12 12.2v8.4"></path></symbol><symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"></circle></symbol></svg>
+<div class="pv-banner" role="note"><span class="pv-badge">STATIC PREVIEW</span><strong>静态预览 · 非真实面板 · 数据为示例</strong><span class="pv-spacer"></span><div class="pv-controls"><button type="button" class="pv-btn" id="pv-theme" aria-pressed="false">深色</button><button type="button" class="pv-btn" id="pv-width" aria-pressed="false">264px 窄栏</button></div></div>
+<main class="pv-stage" id="pv-stage"><div class="gz-root" data-dsh-plugin="guizhi">
+<header class="gz-head"><div class="gz-brandbar"><div class="gz-brand"><span class="gz-brand-mark"><svg class="gz-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-layers"></use></svg></span><div class="gz-brand-text"><h1 class="gz-title">归置</h1><span class="gz-wordmark">Stow</span></div></div><div class="gz-head-actions"><span class="gz-sys gz-sys-ready" title="系统状态：就绪"><span class="gz-sys-dot"></span><span class="gz-sys-label">就绪</span></span><button type="button" class="gz-btn gz-btn-primary" title="重新扫描本机的插件 / 工具 / 技能 / 近 30 天用量（只读）"><svg class="gz-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-refresh"></use></svg>重新扫描</button></div></div><p class="gz-sub">把本机 DSH 的插件、工具、技能、场景与缺口整理清楚。<span class="gz-sub-note"> 只读扫描 + 写本机状态 · 不改 profile · 不代发。</span></p></header>
+<div class="gz-navrow"><nav class="gz-tabs" role="tablist" aria-label="归置三屏"><span class="gz-tab-ind" aria-hidden="true" style="transform:translateX(0%)"></span><button type="button" role="tab" id="gz-tab-clean" aria-selected="true" aria-controls="gz-panel-clean" class="gz-tab gz-tab-on">清爽</button><button type="button" role="tab" id="gz-tab-scenarios" aria-selected="false" aria-controls="gz-panel-scenarios" class="gz-tab">场景</button><button type="button" role="tab" id="gz-tab-map" aria-selected="false" aria-controls="gz-panel-map" class="gz-tab">地图</button></nav><div class="gz-badges" aria-label="家底汇总"><span class="gz-badge"><span>插件</span><span class="gz-badge-num">30</span></span><span class="gz-badge"><span>工具</span><span class="gz-badge-num">88</span></span><span class="gz-badge"><span>技能</span><span class="gz-badge-num">12</span></span></div></div>
+<div class="gz-body"><section class="gz-panel" role="tabpanel" id="gz-panel-clean" aria-labelledby="gz-tab-clean"><div class="gz-section"><div class="gz-section-head"><h2 class="gz-section-title">本机家底</h2><span class="gz-meta">扫描时间：2026-11-26T20:52:31+08:00</span></div><div class="gz-cards"><article class="gz-card"><div class="gz-card-top"><span class="gz-card-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-grid"></use></svg></span><span class="gz-card-label">插件</span></div><span class="gz-card-num">30</span><span class="gz-card-hint">npm 19 · patch 11</span></article><article class="gz-card" data-tone="accent"><div class="gz-card-top"><span class="gz-card-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-wrench"></use></svg></span><span class="gz-card-label">工具</span></div><span class="gz-card-num">88</span><span class="gz-card-hint">38 个已归因</span></article><article class="gz-card"><div class="gz-card-top"><span class="gz-card-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-sparkles"></use></svg></span><span class="gz-card-label">技能</span></div><span class="gz-card-num">12</span><span class="gz-card-hint">全局技能目录</span></article><article class="gz-card" data-tone="warn"><div class="gz-card-top"><span class="gz-card-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-clock"></use></svg></span><span class="gz-card-label">近 30 天未用</span></div><span class="gz-card-num">7</span><span class="gz-card-hint">已知 0 次调用的工具</span></article></div><details class="gz-details"><summary><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-alert"></use></svg><span>扫描提示 2 条</span></summary><ul class="gz-warn-list"><li>8 个插件源码扫描截断（200 文件 / 1MB 上限）</li><li>50 个工具无法归因（不虚构来源）</li></ul></details><div class="gz-table-card"><div class="gz-table-scroll"><table class="gz-table"><thead><tr><th>工具</th><th>归属（owners）</th><th>近 30 天用量</th></tr></thead><tbody><tr><td class="gz-tool-name">read</td><td><span class="gz-owners"><span class="gz-owner-chip" title="@deepseek-ai/dsh-tools">@deepseek-ai/dsh-tools</span></span></td><td><div class="gz-usage"><span class="gz-usage-bar" aria-hidden="true"><span class="gz-usage-fill" style="width:82%"></span></span><span class="gz-usage-num">42</span></div></td></tr><tr><td class="gz-tool-name">write</td><td><span class="gz-owners"><span class="gz-owner-chip" title="@deepseek-ai/dsh-tools">@deepseek-ai/dsh-tools</span><span class="gz-owner-chip" title="dsh-doc-kit">dsh-doc-kit</span></span></td><td><div class="gz-usage"><span class="gz-usage-bar" aria-hidden="true"><span class="gz-usage-fill" style="width:33%"></span></span><span class="gz-usage-num">17</span></div></td></tr><tr><td class="gz-tool-name">grep</td><td><span class="gz-owners"><span class="gz-owner-chip" title="@deepseek-ai/dsh-tools">@deepseek-ai/dsh-tools</span></span></td><td><div class="gz-usage"><span class="gz-usage-bar" aria-hidden="true"><span class="gz-usage-fill" style="width:71%"></span></span><span class="gz-usage-num">36</span></div></td></tr><tr><td class="gz-tool-name">bash</td><td><span class="gz-owners"><span class="gz-owner-chip" title="@deepseek-ai/dsh-tools">@deepseek-ai/dsh-tools</span></span></td><td><div class="gz-usage"><span class="gz-usage-bar" aria-hidden="true"><span class="gz-usage-fill" style="width:100%"></span></span><span class="gz-usage-num">51</span></div></td></tr><tr><td class="gz-tool-name">web_search</td><td><span class="gz-owners"><span class="gz-owner-chip" title="dsh-web-search">dsh-web-search</span></span></td><td><div class="gz-usage"><span class="gz-usage-bar" aria-hidden="true"><span class="gz-usage-fill" style="width:18%"></span></span><span class="gz-usage-num">9</span></div></td></tr><tr><td class="gz-tool-name">browser</td><td><span class="gz-owners"><span class="gz-owner-chip" title="dsh-ego-browser">dsh-ego-browser</span></span></td><td><span class="gz-unknown" title="用量未知：宿主未提供近 30 天用量；未知不会显示成 0。">未知</span></td></tr><tr><td class="gz-tool-name">worktree</td><td><span class="gz-owners"><span class="gz-owner-chip" title="@deepseek-ai/dsh-experimental-tool-worktree">@deepseek-ai/dsh-experimental-tool-worktree</span></span></td><td><div class="gz-usage"><span class="gz-usage-bar" aria-hidden="true"><span class="gz-usage-fill" style="width:8%"></span></span><span class="gz-usage-num">2</span></div></td></tr></tbody></table></div></div><div class="gz-note"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-alert"></use></svg><span>用量统计部分可用：未知行显示灰色「未知」，绝不显示 0。</span></div><p class="gz-hint">扫描只读采集本机事实；用量未知（used30d = null）显示「未知」而不是 0。</p></div></section><section class="gz-panel" role="tabpanel" id="gz-panel-scenarios" aria-labelledby="gz-tab-scenarios" hidden><div class="gz-section"><div class="gz-section-head"><h2 class="gz-section-title">选场景</h2><span class="gz-meta">内置 6 个 · 可多选</span></div><p class="gz-hint">内置 6 个场景可多选；自定义一句话用于补充。保存只写本机状态，不生成工作流、不调用模型。</p><div class="gz-chips"><button type="button" class="gz-chip gz-chip-on" aria-pressed="true"><span class="gz-chip-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-pen"></use></svg></span><span>内容生产</span><span class="gz-chip-check"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span></button><button type="button" class="gz-chip" aria-pressed="false"><span class="gz-chip-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-palette"></use></svg></span><span>视觉设计</span><span class="gz-chip-check"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span></button><button type="button" class="gz-chip gz-chip-on" aria-pressed="true"><span class="gz-chip-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-code"></use></svg></span><span>研发</span><span class="gz-chip-check"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span></button><button type="button" class="gz-chip" aria-pressed="false"><span class="gz-chip-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-search"></use></svg></span><span>调研</span><span class="gz-chip-check"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span></button><button type="button" class="gz-chip" aria-pressed="false"><span class="gz-chip-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-briefcase"></use></svg></span><span>办公</span><span class="gz-chip-check"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span></button><button type="button" class="gz-chip" aria-pressed="false"><span class="gz-chip-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-sun"></use></svg></span><span>日常</span><span class="gz-chip-check"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span></button></div><div class="gz-field"><textarea class="gz-input" rows="2" aria-label="自定义场景（一句话，200 字以内）">给研发团队做内部小工具</textarea><div class="gz-counter"><span>11 / 200</span></div></div><div class="gz-actions gz-actions-flush"><button type="button" class="gz-btn gz-btn-primary">保存场景</button><span class="gz-saved">已保存：内容生产、研发；自定义：给研发团队做内部小工具</span></div></div></section><section class="gz-panel" role="tabpanel" id="gz-panel-map" aria-labelledby="gz-tab-map" hidden><div class="gz-section"><div class="gz-section-head"><h2 class="gz-section-title">工作流地图</h2><span class="gz-meta">2 个阶段</span></div><p class="gz-map-meta">已选场景：内容生产、研发；自定义：给研发团队做内部小工具</p><ol class="gz-timeline"><li class="gz-stage"><span class="gz-stage-marker" aria-hidden="true"><span class="gz-stage-num">1</span></span><div class="gz-stage-body"><div class="gz-stage-head"><h3 class="gz-stage-title">理解需求</h3><span class="gz-stage-id">understand</span><span class="gz-stage-count">2 个能力点</span></div><div class="gz-caps"><div class="gz-cap-block"><button type="button" class="gz-cap gz-cap-have" aria-expanded="false"><span class="gz-cap-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span><span class="gz-cap-title">读代码</span><span class="gz-cap-status">已有</span><span class="gz-cap-chevron"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-chevron"></use></svg></span></button><div class="gz-evidence" hidden><dl class="gz-evidence-grid"><div class="gz-evidence-row"><dt class="gz-evidence-key">来源</dt><dd class="gz-evidence-val">scan</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">工具</dt><dd class="gz-evidence-val">read、grep</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">近 30 天用量</dt><dd class="gz-evidence-val">42</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">最后使用</dt><dd class="gz-evidence-val">2026-11-25 08:00</dd></div></dl></div></div><div class="gz-cap-block"><button type="button" class="gz-cap gz-cap-have" aria-expanded="false"><span class="gz-cap-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span><span class="gz-cap-title">本地检索</span><span class="gz-cap-status">已有</span><span class="gz-cap-chevron"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-chevron"></use></svg></span></button><div class="gz-evidence" hidden><dl class="gz-evidence-grid"><div class="gz-evidence-row"><dt class="gz-evidence-key">来源</dt><dd class="gz-evidence-val">scan</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">工具</dt><dd class="gz-evidence-val">grep、glob</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">近 30 天用量</dt><dd class="gz-evidence-val">36</dd></div></dl></div></div></div></div></li><li class="gz-stage"><span class="gz-stage-marker" aria-hidden="true"><span class="gz-stage-num">2</span></span><div class="gz-stage-body"><div class="gz-stage-head"><h3 class="gz-stage-title">交付</h3><span class="gz-stage-id">deliver</span><span class="gz-stage-count">3 个能力点</span></div><div class="gz-caps"><div class="gz-cap-block"><button type="button" class="gz-cap gz-cap-missing" aria-expanded="true"><span class="gz-cap-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-alert"></use></svg></span><span class="gz-cap-title">联网搜索</span><span class="gz-cap-status">缺</span><span class="gz-cap-chevron"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-chevron"></use></svg></span></button><div class="gz-evidence"><dl class="gz-evidence-grid"><div class="gz-evidence-row"><dt class="gz-evidence-key">来源</dt><dd class="gz-evidence-val">catalog</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">匹配</dt><dd class="gz-evidence-val">无</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">说明</dt><dd class="gz-evidence-val">公共目录里没有匹配 dsh-web-search 的插件</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">近 30 天用量</dt><dd class="gz-evidence-val">未知</dd></div></dl></div></div><div class="gz-cap-block"><button type="button" class="gz-cap gz-cap-have" aria-expanded="false"><span class="gz-cap-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-check"></use></svg></span><span class="gz-cap-title">写文档</span><span class="gz-cap-status">已有</span><span class="gz-cap-chevron"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-chevron"></use></svg></span></button><div class="gz-evidence" hidden><dl class="gz-evidence-grid"><div class="gz-evidence-row"><dt class="gz-evidence-key">来源</dt><dd class="gz-evidence-val">scan</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">工具</dt><dd class="gz-evidence-val">write</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">近 30 天用量</dt><dd class="gz-evidence-val">0</dd></div></dl></div></div><div class="gz-cap-block"><button type="button" class="gz-cap gz-cap-redundant" aria-expanded="false"><span class="gz-cap-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-dot"></use></svg></span><span class="gz-cap-title">笔记</span><span class="gz-cap-status">冗余</span><span class="gz-cap-chevron"><svg class="gz-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-chevron"></use></svg></span></button><div class="gz-evidence" hidden><dl class="gz-evidence-grid"><div class="gz-evidence-row"><dt class="gz-evidence-key">来源</dt><dd class="gz-evidence-val">scan</dd></div><div class="gz-evidence-row"><dt class="gz-evidence-key">说明</dt><dd class="gz-evidence-val">未发现使用记录</dd></div></dl></div></div></div></div></li></ol><section class="gz-result" data-tone="info"><div class="gz-result-head"><span class="gz-result-icon"><svg class="gz-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-info"></use></svg></span><div class="gz-result-headings"><span class="gz-result-kicker">操作结果</span><h3 class="gz-result-title">预览：将应用 2 条</h3></div></div><p class="gz-result-meta">hash：<code class="gz-hash">a3f19c2e7b4d1068…</code></p><ul class="gz-result-list"><li class="gz-result-item"><span class="gz-kind-chip">安装</span><span class="gz-result-item-title">dsh-web-search</span><span class="gz-result-effect">安装提案（v1 只预览，不安装）</span></li><li class="gz-result-item"><span class="gz-kind-chip">工具包</span><span class="gz-result-item-title">归置能力包</span><span class="gz-result-effect">导出 packs/&lt;id&gt;.json</span></li></ul><p class="gz-hint">点「应用」会按这批条目执行；应用前会先建快照。</p></section><div class="gz-actionbar" role="group" aria-label="地图操作"><div class="gz-actionbar-main"><button type="button" class="gz-btn">查缺补漏</button><button type="button" class="gz-btn">生成工具包</button><button type="button" class="gz-btn">预览变更</button><button type="button" class="gz-btn gz-btn-primary">应用</button><button type="button" class="gz-btn">生成派单草稿</button></div><div class="gz-actionbar-snap"><label class="gz-snap-label" for="pv-snapshot">快照 id</label><input id="pv-snapshot" class="gz-input gz-input-inline" placeholder="快照 id（应用后自动填入）" aria-label="快照 id"><button type="button" class="gz-btn">回滚</button></div></div></div></section></div>
+<footer class="gz-status" aria-live="polite"><span class="gz-status-ok">扫描完成</span><span class="gz-hint">更新于 20:52:41</span><span class="gz-status-ver">v0.1.0</span></footer>
+</div></main>
+<p class="pv-note">本页是 <code>docs/ui-preview.html</code> 静态视觉预览：三屏 Tab、场景 chip、能力点证据展开均可点击，仅用于肉眼验收版式与配色；数据全部为示例。真实面板的行为与样式以 <code>client.js</code> 为准（真机渲染 not-run）。右上「深色」预览宿主深色主题下的自适应；面板按桌面侧栏面板宽度 420px 绘制，可切到「264px 窄栏」预览最小宽度下的布局（本版不做移动端适配）。</p>
+<script>
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.gz-tab'))
+  var ids = ['clean', 'scenarios', 'map']
+  var indicator = document.querySelector('.gz-tab-ind')
+  var stage = document.getElementById('pv-stage')
+  var themeBtn = document.getElementById('pv-theme')
+  var widthBtn = document.getElementById('pv-width')
+  function activate(id) {
+    tabs.forEach(function (btn) {
+      var on = btn.id === 'gz-tab-' + id
+      btn.classList.toggle('gz-tab-on', on)
+      btn.setAttribute('aria-selected', on ? 'true' : 'false')
+    })
+    ids.forEach(function (pid) {
+      var panel = document.getElementById('gz-panel-' + pid)
+      if (!panel) return
+      if (pid === id) panel.removeAttribute('hidden')
+      else panel.setAttribute('hidden', '')
+    })
+    indicator.style.transform = 'translateX(' + ids.indexOf(id) * 100 + '%)'
+  }
+  tabs.forEach(function (btn) { btn.addEventListener('click', function () { activate(btn.id.replace('gz-tab-', '')) }) })
+  document.querySelectorAll('.gz-chip').forEach(function (chipEl) {
+    chipEl.addEventListener('click', function () {
+      var on = chipEl.getAttribute('aria-pressed') === 'true'
+      chipEl.setAttribute('aria-pressed', on ? 'false' : 'true')
+      chipEl.classList.toggle('gz-chip-on', !on)
+    })
+  })
+  document.querySelectorAll('.gz-cap').forEach(function (cap) {
+    cap.addEventListener('click', function () {
+      var block = cap.parentElement
+      var evidence = block ? block.querySelector('.gz-evidence') : null
+      if (!evidence) return
+      var open = cap.getAttribute('aria-expanded') === 'true'
+      cap.setAttribute('aria-expanded', open ? 'false' : 'true')
+      if (open) evidence.setAttribute('hidden', '')
+      else evidence.removeAttribute('hidden')
+    })
+  })
+  themeBtn.addEventListener('click', function () {
+    var dark = document.body.getAttribute('data-theme') !== 'dark'
+    document.body.setAttribute('data-theme', dark ? 'dark' : 'light')
+    themeBtn.setAttribute('aria-pressed', dark ? 'true' : 'false')
+    themeBtn.textContent = dark ? '浅色' : '深色'
+  })
+  widthBtn.addEventListener('click', function () {
+    var narrow = !stage.classList.contains('pv-narrow')
+    stage.classList.toggle('pv-narrow', narrow)
+    widthBtn.setAttribute('aria-pressed', narrow ? 'true' : 'false')
+    widthBtn.textContent = narrow ? '420px 面板' : '264px 窄栏'
+  })
+})()
+</script>
+</body>
+</html>
