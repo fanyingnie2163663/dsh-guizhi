@@ -55,8 +55,14 @@
   var PANEL_ID = 'guizhi'
   var SLOT_PANEL_LIST = 'sidebar.panellist'
   var SLOT_MAIN = 'main'
-  /** Row order among the shell's global panel rows (Plugins 0, Schedule 10, skill center 30). */
-  var PANEL_ORDER = 45
+  /**
+   * Row order among the shell's global panel rows. The shell's own rows use
+   * Plugins 0 / Schedule 10 / skill center 30, so 20 slots 归置 right after
+   * Schedule and before the skill center: early enough in a long panel list to
+   * become the product's memory hook, without pushing the shell's primary rows
+   * (Plugins) down. Keep this a single small number; the shell sorts ascending.
+   */
+  var PANEL_ORDER = 20
   /** The only version constant in the browser half. */
   var PLUGIN_VERSION = '0.1.0'
   var STYLE_MARKER = 'data-guizhi-style'
@@ -121,6 +127,13 @@
 
   /** Inline stroke-icon shapes, [tag, props] tuples shared by every icon() call. */
   var ICON_SHAPES = {
+    stow: [
+      ['path', { d: 'M12 3.4v8.1' }],
+      ['path', { d: 'M8.7 8.4 12 11.7l3.3-3.3' }],
+      ['path', { d: 'M4 14h16' }],
+      ['path', { d: 'M5 14v3.3c0 1.4 1.1 2.5 2.5 2.5h9c1.4 0 2.5-1.1 2.5-2.5V14' }],
+      ['path', { d: 'M9.4 17.7h5.2' }],
+    ],
     layers: [
       ['path', { d: 'M12 3.6 20 8l-8 4.4L4 8l8-4.4Z' }],
       ['path', { d: 'M4 12.2 12 16.6l8-4.4' }],
@@ -404,7 +417,11 @@
   }
 
   /**
-   * The sidebar row icon.
+   * The left-sidebar panel row icon (the product's memory hook). One-color
+   * currentColor stroke so the shell tints it exactly like its own rows; the
+   * same mark is the 64x64 brand graphic in icon.svg and the panel brand mark.
+   * The hover tooltip comes from the slot label ("归置"), not from the icon, so
+   * no title/self-drawn tooltip is attached here.
    * @param {*} React
    * @returns {Function} React component
    */
@@ -412,10 +429,26 @@
     return function GuizhiIcon() {
       return React.createElement(
         'svg',
-        { viewBox: '0 0 24 24', width: 16, height: 16, 'aria-hidden': 'true', focusable: 'false' },
-        React.createElement('rect', { x: 3, y: 5, width: 18, height: 3.4, rx: 1.2, fill: 'currentColor', opacity: 0.95 }),
-        React.createElement('rect', { x: 4.6, y: 10.4, width: 14.8, height: 3.4, rx: 1.2, fill: 'currentColor', opacity: 0.7 }),
-        React.createElement('rect', { x: 6.2, y: 15.8, width: 11.6, height: 3.4, rx: 1.2, fill: 'currentColor', opacity: 0.5 }),
+        {
+          viewBox: '0 0 24 24',
+          width: 18,
+          height: 18,
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.8,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          role: 'img',
+          'aria-label': '归置',
+          focusable: 'false',
+        },
+        // 归位：向下的箭头落进收纳盒。
+        React.createElement('path', { d: 'M12 3.4v8.1' }),
+        React.createElement('path', { d: 'M8.7 8.4 12 11.7l3.3-3.3' }),
+        // 收纳盒：开口托盘 + 盒内已归置的一条。
+        React.createElement('path', { d: 'M4 14h16' }),
+        React.createElement('path', { d: 'M5 14v3.3c0 1.4 1.1 2.5 2.5 2.5h9c1.4 0 2.5-1.1 2.5-2.5V14' }),
+        React.createElement('path', { d: 'M9.4 17.7h5.2' }),
       )
     }
   }
@@ -901,7 +934,7 @@
         return h('header', { className: 'gz-head' },
           h('div', { className: 'gz-brandbar' },
             h('div', { className: 'gz-brand' },
-              h('span', { className: 'gz-brand-mark' }, icon('layers', 18)),
+              h('span', { className: 'gz-brand-mark' }, icon('stow', 18)),
               h('div', { className: 'gz-brand-text' },
                 h('h1', { className: 'gz-title' }, '归置'),
                 h('span', { className: 'gz-wordmark' }, 'Stow'),
