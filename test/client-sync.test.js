@@ -116,6 +116,17 @@ test('client.js（一键整理进度）：轮询 pipelineStatus 并渲染圆环�
   assert.ok(source.includes('一键整理进度 '))
 })
 
+test('client.js（目录源）：工作流页可填目录源并保存', async () => {
+  const source = await readClientSource()
+  assert.ok(source.includes('目录源'))
+  assert.ok(source.includes("apiRequest('sources'"))
+  assert.ok(source.includes('renderSources'))
+  assert.ok(source.includes('目录源 URL'))
+  assert.ok(source.includes('推荐源'))
+  assert.ok(source.includes('保存目录源'))
+})
+
+
 
 
 

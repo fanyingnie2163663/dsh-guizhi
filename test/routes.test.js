@@ -250,9 +250,9 @@ function assertFailure(response, status, pattern) {
 // Route table
 // ---------------------------------------------------------------------------
 
-test('路由表：13 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATHS 一一对应', () => {
+test('路由表：14 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATHS 一一对应', () => {
   const routes = createRoutes({ deps: makeDeps() })
-  assert.equal(routes.length, 13)
+  assert.equal(routes.length, 14)
   for (const route of routes) {
     assert.ok(route.method === 'GET' || route.method === 'POST', 'method 只能是 GET/POST')
     assert.equal(typeof route.path, 'string')
@@ -262,7 +262,7 @@ test('路由表：13 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATH
   assert.deepEqual(routes.map((route) => route.path).sort(), Object.values(ROUTE_PATHS).sort())
   assert.equal(routeOf(routes, ROUTE_PATHS.state).method, 'GET')
   assert.equal(routeOf(routes, ROUTE_PATHS.pipelineStatus).method, 'GET')
-  for (const key of ['scan', 'scenarios', 'map', 'pack', 'gaps', 'preview', 'apply', 'rollback', 'draft', 'dispatch', 'pipeline']) {
+  for (const key of ['scan', 'scenarios', 'map', 'pack', 'gaps', 'preview', 'apply', 'rollback', 'draft', 'dispatch', 'pipeline', 'sources']) {
     assert.equal(routeOf(routes, ROUTE_PATHS[key]).method, 'POST', key + ' 必须是 POST')
   }
 })
@@ -280,7 +280,7 @@ test('GET state：返回 scan/map/proposals/selections 与 warnings；缺失文�
   })
   const response = await call(makeDeps({ store }), ROUTE_PATHS.state, {})
   assert.equal(response.status, 200)
-  assert.deepEqual(Object.keys(response.json).sort(), ['dispatch', 'dispatchSupported', 'map', 'proposals', 'scan', 'selections', 'warnings'])
+  assert.deepEqual(Object.keys(response.json).sort(), ['dispatch', 'dispatchSupported', 'map', 'proposals', 'scan', 'selections', 'sources', 'warnings'])
   assert.deepEqual(response.json.scan, sampleScan())
   assert.deepEqual(response.json.map, sampleMap())
   assert.deepEqual(response.json.proposals, sampleProposals())
@@ -319,7 +319,7 @@ test('GET state：store.read 自己抛错也不冒泡，每个文档一条 warni
   assert.equal(response.json.map, null)
   assert.equal(response.json.proposals, null)
   assert.equal(response.json.selections, null)
-  assert.equal(response.json.warnings.length, 5)
+  assert.equal(response.json.warnings.length, 6)
   for (const message of response.json.warnings) assert.match(message, /disk boom/)
 })
 
@@ -1274,6 +1274,47 @@ test('GET pipeline/status：运行中报告当前步骤与百分比，完成后 
   assert.equal(finished.json.steps.length, 5)
   assert.equal(finished.json.steps[0].id, 'scan')
 })
+
+// ---------------------------------------------------------------------------
+// POST sources + GET state.sources
+// ---------------------------------------------------------------------------
+
+test('POST sources：保存 http(s) 目录源，GET state 能读回；空字符串清空', async () => {
+  const store = createFakeStore({})
+  const deps = makeDeps({ store })
+  const saved = await call(deps, ROUTE_PATHS.sources, { url: '  https://example.com/catalog.json  ' })
+  assert.equal(saved.status, 200)
+  assert.equal(saved.json.url, 'https://example.com/catalog.json')
+  assert.equal(saved.json.configured, true)
+  assert.deepEqual(store.writes.map((write) => write.name), ['sources'])
+  const state = await call(deps, ROUTE_PATHS.state, {})
+  assert.equal(state.json.sources.url, 'https://example.com/catalog.json')
+  const cleared = await call(deps, ROUTE_PATHS.sources, { url: '' })
+  assert.equal(cleared.status, 200)
+  assert.equal(cleared.json.configured, false)
+  assert.equal((await store.read('sources')).value.url, '')
+})
+
+test('POST sources：非 http(s) / 非字符串 / 超长 URL 都是 400（不写状态）', async () => {
+  const store = createFakeStore({})
+  const deps = makeDeps({ store })
+  for (const url of ['ftp://example.com/catalog.json', 'file:///etc/passwd', 'https://example.com/' + 'a'.repeat(500), 42]) {
+    const response = await call(deps, ROUTE_PATHS.sources, { url })
+    assertFailure(response, 400, /目录源/)
+    assert.equal(response.json.code, 'SOURCE_URL_INVALID')
+  }
+  assert.deepEqual(store.writes, [])
+})
+
+test('POST gaps：未配置目录源时 fail-open，返回可操作的目录源提示（不假装没有缺口）', async () => {
+  const store = createFakeStore({ map: sampleMap(), scan: sampleScan() })
+  const response = await call(makeDeps({ store }), ROUTE_PATHS.gaps, {})
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.json.items, [])
+  assert.match(response.json.error, /目录源/)
+  assert.match(response.json.error, /工作流/)
+})
+
 
 
 

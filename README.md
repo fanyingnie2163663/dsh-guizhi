@@ -121,12 +121,40 @@ dsh plugin --profile <profile> add @fanyingnie/dsh-guizhi
 1. **清爽**页点「重新扫描」：只读盘点本机，不调模型。
 2. **场景**页选场景 + 写一句自定义，保存。
 3. 让会话 agent 用 `stow_map_save` 把工作流落成阶段地图（阶段 + 能力点 + 证据）。
-4. **地图**页点「查缺补漏」：从公共目录匹配缺口（不可达会明确报错）。
+4. **工作流**页先在「目录源」填一个 format-1 目录地址并保存（推荐源见下节），再点「查缺补漏」：从该目录匹配缺口（不可达会明确报错）。
 5. 点「生成工具包」：只生成 `kind=pack` **提案**，不落盘。
 6. 点「预览变更」：看 diff 与稳定 hash，确认要应用的条目。
 7. 点「应用」：先写快照、备份被覆盖的旧包、记台账，再导出 `packs/<id>.json`。
 8. 点「回滚」：删除本次新建包、恢复被覆盖旧包、恢复状态；重复回滚幂等。
 
+
+### 目录源（查缺补漏用）
+
+查缺补漏需要一个**公共目录**（format-1 JSON 索引）来匹配本机缺失的能力。目录源不内置默认值：外部内容默认不可信，请自己确认来源后填入。
+
+**在面板里填**：工作流页 →「目录源」输入框 → 粘贴 http(s) 地址 →「保存」。配置写入 `$DSH_HOME/guizhi/sources.json`；随后「查缺补漏」或「一键整理」就会使用它（结果缓存 6 小时；不可达/格式错会明确报错并 fail-open，不会显示成「没有缺口」）。
+
+**推荐源（示例）**：本仓库自带一份可直接托管的示例目录 [`docs/catalog.example.json`](docs/catalog.example.json)。把它放到任意 HTTPS 静态地址（或直接使用仓库 raw 地址，注意替换成你自己的账号/fork），例如：
+
+```text
+https://raw.githubusercontent.com/<你的 GitHub 账号>/dsh-guizhi/v1/docs/catalog.example.json
+```
+
+> 该地址需要对应分支已推送后才可用；只是格式示例，里面的插件条目请按你的真实来源替换。
+
+**目录格式（format-1）**：根对象含 `plugins` 数组；每条至少 `name`，可选 `title` / `description` / `version`。查缺补漏会用能力点 id/标题与条目的 name/title/description 做包含匹配（单向），已安装的插件名会跳过，最多生成 20 条安装提案。
+
+```json
+{
+  "format": 1,
+  "plugins": [
+    { "name": "@example/dsh-web-research", "title": "网页调研", "description": "实时网页浏览与检索、页面结构抽取" }
+  ]
+}
+```
+
+- 只接受 `http(s)` 地址；目录内容只解析为数据，不执行、不自动安装。
+- 想要一份更完整的清单，可以按 format-1 自己维护并托管（gist / 静态站点 / 内部服务均可）。
 ### Agent 工具（9 个 `stow_*`）
 
 | 工具 | 作用 |
@@ -143,7 +171,7 @@ dsh plugin --profile <profile> add @fanyingnie/dsh-guizhi
 
 ### HTTP 路由
 
-`GET /api/guizhi/state` · `POST /api/guizhi/{scan,scenarios,map,pack,gaps,preview,apply,rollback,draft}`（仅本机 loopback，按插件内围栏拒绝远端）。
+`GET /api/guizhi/state` · `POST /api/guizhi/{scan,scenarios,map,pack,gaps,preview,apply,rollback,draft,sources,pipeline}` · `GET /api/guizhi/pipeline/status`（仅本机 loopback，按插件内围栏拒绝远端）。
 
 ## 数据与隐私
 
@@ -169,7 +197,7 @@ $DSH_HOME/guizhi/
 
 ```bash
 pnpm install                    # 仅 yaml 运行时依赖
-node --test test/*.test.js      # 280 个测试
+node --test test/*.test.js      # 322 个测试
 node --check client.js lib/*.js # 语法检查（无构建步骤）
 ```
 

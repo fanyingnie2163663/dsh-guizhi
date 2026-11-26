@@ -387,6 +387,11 @@
       '.gz-result-item-title{flex:1 1 auto;min-width:0;word-break:break-word}',
       '.gz-result-effect{font-size:11px;color:var(--gz-text-3);word-break:break-word}',
       '.gz-result-meta{margin:0;font-size:11.5px;line-height:1.55;color:var(--gz-text-2);word-break:break-word}',
+      '.gz-sources{display:flex;flex-direction:column;gap:6px;border:1px solid var(--gz-line,rgba(127,127,127,.24));border-radius:var(--gz-radius-md);padding:10px 12px;background:rgba(127,127,127,.04)}',
+      '.gz-sources-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}',
+      '.gz-sources-head strong{font-size:12px;font-weight:650;color:var(--gz-text)}',
+      '.gz-sources-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.gz-sources-input{flex:1 1 260px;min-width:0}',
       '.gz-progress{display:flex;align-items:center;gap:14px;border:1px solid var(--gz-line,rgba(127,127,127,.24));border-radius:var(--gz-radius-md);padding:12px;background:rgba(127,127,127,.05)}',
       '.gz-progress-ring{position:relative;display:flex;align-items:center;justify-content:center;width:72px;height:72px;flex:0 0 auto}',
       '.gz-progress-ring svg{position:absolute;inset:0}',
@@ -615,6 +620,10 @@
       var action = actionHook[0]
       var setAction = actionHook[1]
 
+      var sourceHook = useState({ url: '', touched: false })
+      var sourceDraft = sourceHook[0]
+      var setSourceDraft = sourceHook[1]
+
       var scenariosHook = useState({ selected: [], custom: '', touched: false })
       var scenarioDraft = scenariosHook[0]
       var setScenarioDraft = scenariosHook[1]
@@ -708,6 +717,15 @@
           : null
       var selectionsKey = selections === null ? '' : JSON.stringify(selections)
 
+      var sourcesDoc = data !== null && data !== undefined && data.sources !== null && typeof data.sources === 'object' ? data.sources : null
+      var sourcesKey = sourcesDoc === null ? '' : JSON.stringify(sourcesDoc)
+
+      useEffect(function () {
+        if (sourcesDoc === null) return
+        if (sourceDraft.touched) return
+        setSourceDraft({ url: typeof sourcesDoc.url === 'string' ? sourcesDoc.url : '', touched: false })
+      }, [sourcesKey])
+
       useEffect(function () {
         if (selections === null) return
         if (scenarioDraft.touched) return
@@ -740,6 +758,55 @@
             setAction({ busy: '', message: '', error: errorText(error) + details, warnings: warnings })
             return null
           })
+      }
+
+      /** Catalog source form: save/clear the user-supplied format-1 index URL. */
+      function onSourceChange(event) {
+        var value = event !== null && event !== undefined && event.target !== null && event.target !== undefined ? event.target.value : ''
+        setSourceDraft({ url: truncateByCodePoints(value, 500), touched: true })
+      }
+
+      function saveSource(url) {
+        runAction('保存目录源', function () {
+          return apiRequest('sources', { method: 'POST', body: { url: url } })
+        }, function (saved) {
+          setSourceDraft({ url: saved !== null && typeof saved === 'object' && typeof saved.url === 'string' ? saved.url : '', touched: false })
+        })
+      }
+
+      function onSaveSource() {
+        saveSource(sourceDraft.url)
+      }
+
+      function onClearSource() {
+        setSourceDraft({ url: '', touched: true })
+        saveSource('')
+      }
+
+      function renderSources() {
+        var busy = action.busy !== ''
+        var configured = typeof sourceDraft.url === 'string' && sourceDraft.url.trim() !== ''
+        return h('div', { className: 'gz-sources' },
+          h('div', { className: 'gz-sources-head' },
+            h('strong', {}, '目录源'),
+            h('span', { className: 'gz-hint' }, '查缺补漏用 · 目录格式与推荐源见 README「目录源」'),
+          ),
+          h('div', { className: 'gz-sources-row' },
+            h('input', {
+              className: 'gz-input gz-sources-input',
+              type: 'url',
+              inputMode: 'url',
+              placeholder: 'https://example.com/catalog.json',
+              value: sourceDraft.url,
+              onChange: onSourceChange,
+              'aria-label': '目录源 URL',
+            }),
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onSaveSource }, '保存'),
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onClearSource }, '清空'),
+          ),
+          h('p', { className: 'gz-hint' }, configured ? '已填写；保存后点「查缺补漏」或「一键整理」会使用该目录（缓存 6 小时，不可达会明确报错）。' : '只接受 http(s) 链接；推荐源与 format-1 目录示例见 README。保存后点「查缺补漏」或「一键整理」。'),
+          h('p', { className: 'gz-hint' }, '不内置默认目录源：外部目录只当数据读取，是否信任由你决定。'),
+        )
       }
 
       function onScan() {
@@ -1422,6 +1489,7 @@
           gapChildren.push(renderWarningDetails(payload.warnings, '警告'))
           if (payload.error) {
             gapChildren.push(h('p', { className: 'gz-result-err' }, icon('alert', 13), h('span', {}, '目录错误：' + String(payload.error))))
+            if (String(payload.error).indexOf('目录源') >= 0) gapChildren.push(h('p', { className: 'gz-hint' }, '在上方「目录源」填入地址并保存后重试；推荐源与目录格式见 README。'))
           }
           if (payload.stale === true) {
             gapChildren.push(h('p', { className: 'gz-status-warn' }, '目录刷新失败，当前使用过期缓存的结果'))
@@ -1625,6 +1693,7 @@
             ),
             h('p', { className: 'gz-map-meta' }, meta),
             body,
+            renderSources(),
             renderPipelineProgress(),
             renderDispatchStatus(),
             renderResult(),
