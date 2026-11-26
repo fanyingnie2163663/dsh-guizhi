@@ -2,7 +2,7 @@
 
 - 日期：2026-11-26
 - 分支：v1；Task 8 BASE：7a7c905；T8.5（R-PACK 闭合 pack 提案链）在 784960b 之后提交
-- 最终修复波：BASE 23c3754，F1-F7（R-6B 回滚数据丢失 / R-8A preview-apply 一致性 / DEMO format-1 / spec 承诺裁决 / 用量窗口下推 / HTTP 适配抽测 / client 文案与便宜 Minor），见 [task-final-fix-report.md](../.superpowers/sdd/2026-11-26-guizhi-v1/task-final-fix-report.md)
+- 最终修复波：BASE 23c3754，F1-F7（R-6B 回滚数据丢失 / R-8A preview-apply 一致性 / DEMO format-1 / spec 承诺裁决 / 用量窗口下推 / HTTP 适配抽测 / client 文案与便宜 Minor）；内部修复记录不随仓库分发。
 - 相关代码：[routes.js](../lib/routes.js)、[apply.js](../lib/apply.js)、[store.js](../lib/store.js)、[http.js](../lib/http.js)、[client.js](../client.js)、[e2e.test.js](../test/e2e.test.js)
 - 本文件同时是「演示脚本」与「设计文档 §11 验收」的证据记录。真机安装/重启/面板/录屏在本机为 **not-run**（禁止重启宿主、禁止改真实 profile），凡 not-run 一律不写成 pass。
 
@@ -109,10 +109,10 @@
 
 ## 3. 真实 profile 只读冒烟（§11 #1 的近似证据）
 
-- 方法：一次性脚本（不提交；位于 gitignore 的 .superpowers/ 下）调用 lib/host.js 的 createHostAdapter（ctx 桩，仅读 profile 文件）+ lib/attribution.js 的 attributeTools/withAttribution + lib/usage.js 的 summarizeUsage + lib/scan.js 的 scanFacts。**不启动宿主、不写 profile、不写数据根**。
-- profile：C:/Users/Administrator/.dsh/profiles/desktop；数据根在冒烟前后均不存在（guizhiDataRootBefore=false / After=false），profile/package.json mtime 前后一致。
-- 命令（在仓库根执行）：`node .superpowers/sdd/2026-11-26-guizhi-v1/t8-smoke.mjs`
-- **可复现性（如实说明）**：该脚本是一次性工具，位于 gitignored 的 `.superpowers/sdd/`，**不随仓库分发**（输出存档同目录 `t8-smoke.out.json`）。所以上表是「当时这台机器 / 这份 profile」的读数，不是读者可一键复跑的 benchmark。复现方法：
+- 方法：一次性脚本（不提交；位于本地 gitignored 的内部工作目录）调用 lib/host.js 的 createHostAdapter（ctx 桩，仅读 profile 文件）+ lib/attribution.js 的 attributeTools/withAttribution + lib/usage.js 的 summarizeUsage + lib/scan.js 的 scanFacts。**不启动宿主、不写 profile、不写数据根**。
+- profile：`~/.dsh/profiles/desktop`；数据根在冒烟前后均不存在（guizhiDataRootBefore=false / After=false），profile/package.json mtime 前后一致。
+- 命令（在仓库根执行）：`node <内部工作目录>/t8-smoke.mjs`
+- **可复现性（如实说明）**：该脚本是一次性工具，位于本地 gitignored 的内部工作目录，**不随仓库分发**（输出存档同目录 `t8-smoke.out.json`）。所以上表是「当时这台机器 / 这份 profile」的读数，不是读者可一键复跑的 benchmark。复现方法：
   1) 用仓库公开函数重建最小脚本：`createHostAdapter`（ctx 桩，仅读 profile 文件，不启动宿主）→ `withAttribution` → `summarizeUsage` → `scanFacts`；**不写 profile、不写数据根、不联网**；
   2) 显式传入 profile 路径与 DSH 版本；profile 需装 ≥20 个插件；
   3) 读数随机器、插件数量与会话日志大小变化，只作量级参考；等价的自动化覆盖见 test/attribution.test.js、test/scan.test.js、test/usage.test.js。

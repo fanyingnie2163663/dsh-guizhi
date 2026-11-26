@@ -7,7 +7,7 @@
 <p align="center"><b>看清你装了什么，按你的工作流归置成能用的工具包。</b></p>
 
 <p align="center">
-  <a href="https://github.com/fanyingnie2163663/dsh-guizhi/actions"><img src="https://img.shields.io/badge/tests-280%20passing-2ea44f" alt="tests"></a>
+  <a href="https://github.com/fanyingnie2163663/dsh-guizhi/actions"><img src="https://img.shields.io/badge/tests-322%20passing-2ea44f" alt="tests"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A524.9-339933" alt="node">
   <img src="https://img.shields.io/badge/DSH-%E2%89%A50.2.2-4d6bfe" alt="dsh">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
@@ -213,14 +213,14 @@ test/          node:test：单元 + 路由 + HTTP 适配 + e2e
 
 ## 状态与已知限制
 
-- **v0.1 功能已实现**：280/280 测试通过（分支 `v1`，尚未合并/发布）。
+- **v0.1 功能已实现**：322/322 测试通过（已合并到 `main`；npm `0.1.0` 为 0.x 早期版本）。
 - **真机验证仍待执行**：安装、重启、面板渲染、路由可达、9 工具真实注册调用、≥20 插件真机扫描、录屏、用户测试 —— 步骤见 [`docs/DEMO.md`](docs/DEMO.md) §4；本 README 不宣称真机通过。
 - **v1 未实现（→ v1.1 backlog）**：插件行安装与「需要新会话/重启」提示、能力点「生效方式/需单开会话」徽章、清爽页重复/冲突与上下文成本、应用抽屉逐条启用/忽略、冗余提案与来源信任等级、无 client 插件时的 HTML 报告兜底、场景→工作流自动拆解。
 
 ## 文档
 
 - 设计：[`docs/superpowers/specs/2026-11-26-guizhi-design.md`](docs/superpowers/specs/2026-11-26-guizhi-design.md)
-- 计划：[`docs/superpowers/plans/2026-11-26-guizhi-v1.md`](docs/superpowers/plans/2026-11-26-guizhi-v1.md)
+- 实施计划：内部任务拆解不随仓库分发（以上设计文档为公开参考）。
 - 宿主 API 笔记：[`docs/host-notes.md`](docs/host-notes.md)
 - 演示与验收：[`docs/DEMO.md`](docs/DEMO.md)
 - UI 静态预览：[`docs/ui-preview.html`](docs/ui-preview.html)
