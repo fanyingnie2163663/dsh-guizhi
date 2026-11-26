@@ -18,7 +18,7 @@
 | ④ | 会话事件 | **可用**（`sessionQuery` + `readSession`；`listEvents` 不能给工具名） | `sessionQuery` 服务 | `lib/host.js` `sessionEvents()` |
 | ⑤ | client 槽位 | **可用**（`sidebar.panellist` + `main`） | `slots` 服务 + `window.__ModuleLoader__` | `client.js` |
 | ⑤b | 往输入框塞草稿 | **不可用**（未发现公开 API） | 提取源码/已装插件均无此 API | v1 用剪贴板兜底 |
-| ⑥ | 注册 HTTP 路由 | **可用** | `webServer` 服务 + `webServer.register(route)` | `lib/index.js` `GET /api/guizhi/health` |
+| ⑥ | 注册 HTTP 路由 | **可用**（Task 0 不接线） | `webServer` 服务 + `webServer.register(route)` | **Task 0 不注册 HTTP 路由**；Task 7 以 `/api/guizhi` 前缀实现并有测试 |
 | — | profile 路径 | **可用** | `profileContext` 服务 | `profilePath()` |
 | — | DSH 版本 | **部分可用**（无运行时服务，靠探测） | CLI 启动层 `getDshRuntimeVersion()` | `dshVersion()`，可能 `unknown` |
 
@@ -59,7 +59,7 @@
 - 服务：`SkillRegistry` — `dsh-skill/lib/index.js:119`；服务名 `skills` — `:132`（`super(ctx, "skills")`）。
 - 列表：`list(options = {})` — `dsh-skill/lib/index.js:224-225`（`snapshot(options).skills`）；`snapshot` — `:234-240`；`get(name, options)` — `:250`。
 - 摘要字段：`toSummary(skill)` — `dsh-skill/lib/index.js:491-502`，含 `name/path?/description/whenToUse?/invocation/source/provider/resourceBase?`；排序在 `:237`。
-- providers 由 `dsh-skill-filesystem` 等提供（`dsh-skill/lib/index.js:9-13` 注释；该 provider 包不在提取清单中，不需要直接读目录）。
+- providers 由 `dsh-skill-filesystem` 等提供（`dsh-skill/lib/index.js:9-13` 注释）；该包就在提取清单内（证据根下 `dsh-skill-filesystem/`，含 `lib/`、`locale/`、`package.json`），但本任务不需要直接读它的目录。
 
 **本插件实现**：`listSkills()` → `skills.list({})` → `{name, source: source ?? provider}`；返回数组排序稳定。
 
@@ -94,7 +94,7 @@
 
 ### 往对话输入框塞草稿：**不可用**
 
-- 在提取的宿主源码与已装插件里按「输入框草稿」语义 grep `draft`/`setDraft`/`insertDraft`/`composer`：**无相关命中**（sidebar bundle 无 `draft`/`composer`；全仓唯一的 `composer` 命中是 `dsh-plugin-manager` 的 profile patch composer（`lib/types/patch.js:6`），与对话输入框无关）；`dsh-client-ui-chat` 不在提取清单内，无法核对内部状态 API；已装插件（whalebuddy、skill-explorer、better-sidebar）也没有「写输入框」的用法——只见到 `uiWorkspace.startSession` 开新会话（`dsh-whalebuddy/lib/client.js:2829-2849`；已装 better-sidebar 亦有 `ctx.get("uiWorkspace")`）。
+- 在提取的宿主源码与已装插件里按「输入框草稿」语义 grep `draft`/`setDraft`/`insertDraft`/`composer`：**无相关命中**（sidebar bundle 无 `draft`/`composer`；`composer` 只命中 `dsh-plugin-manager` 的 profile patch composer（同一功能，`lib/types/patch.js:6` 与 `lib/index.js:1176` 两处），与对话输入框无关）；`dsh-client-ui-chat` 不在提取清单内，无法核对内部状态 API；已装插件（whalebuddy、skill-explorer、better-sidebar）也没有「写输入框」的用法——只见到 `uiWorkspace.startSession` 开新会话（`dsh-whalebuddy/lib/client.js:2829-2849`；已装 better-sidebar 亦有 `ctx.get("uiWorkspace")`）。
 - 结论：**没有公开、稳定的「宿主输入框草稿」API**。v1 桥 1 兜底方案（设计 §5 降级）：面板生成「派单草稿」文本 → `navigator.clipboard.writeText` 复制 → 用户自己粘贴/发送；不假装能直接塞输入框。
 
 ## ⑥ 注册 HTTP 路由的 API
@@ -109,31 +109,52 @@
 - 访问围栏：可选 `connection` 服务 `requestRejection(request)`；缺失时退回 loopback 判断 —— `dsh-whalebuddy/lib/host/routes.js:77-121`（`isLoopbackRequest` :77、`resolveConnection` :87、`isConsoleRequestAllowed` :104）。
 - 其他 API（未采用）：`registerUpgrade` — `:389-395`；`registerFallback` — `:405-411`（单占位，不能多插件共享）。
 
-**本插件 Task 0**：`lib/index.js` 用 `ctx.inject(['webServer'], cb)` 挂 `GET /api/guizhi/health`（loopback-only、非 GET 405、返回 probe JSON、`scope.effect` 回收）。真机可达性未验证（见 §8）。
+**本插件 Task 0**：**不注册任何 HTTP 路由**（`lib/index.js` 只注册 `stow_probe`）；路由将在 Task 7 以 `/api/guizhi` 前缀实现并有测试。上面这段宿主契约已核对，Task 7 接线时按 `scope.webServer.register` + `scope.effect` 的形状写；因此 Task 0 没有可 curl 的端点。
 
 ## 其他关键事实
 
 - **profilePath()**：优先 `ctx.get('profileContext').dir`（来源见 ②）；兜底 env `DSH_PROFILE` / argv `--profile <name>` + `$DSH_HOME`（默认 `~/.dsh`）。`DSH_HOME` 解析规则宿主侧见 `dsh-home-paths/lib/index.js:100-112`（最高优先显式配置，其次 `$DSH_HOME`，再次 `~/.dsh`）。
 - **dshVersion()**：宿主**没有**暴露「运行时版本」服务（`profileContext` 字段清单无 version：`dsh/lib/profile-boot-QhDEDXsF.js:301-312`）；版本由 CLI 启动层的 `getDshRuntimeVersion()` 取得（`dsh/lib/bin-CwxESKe-.js:2` import、`:207` 调用），不在插件可达的服务面。本插件探测顺序：env `DSH_CLIENT_VERSION`/`DSH_VERSION` → 从 `argv[1]/argv[0]/execPath` 向上 8 层找 `name ∈ {@deepseek-ai/dsh, dsh, dsh-cli}` 的 package.json → `'unknown'`。该做法与已装插件 `dsh-whale-widget/lib/index.js:3810-3847`（`dshVersionOf()`）一致；不可保证命中，故状态记 **部分可用**。
+- **HostAdapter 的 `warnings` / `takeWarnings()`（additive，文档化）**：六方法接口不变，额外提供只读 `warnings` 快照（每次读取都是新数组，不暴露内部队列）与 `takeWarnings()`（取走本批警告并清空内部队列）。`probeHost` 每次调用先清空、结束后取走本批警告并放进返回值的独立数组，所以连续多次探测不会累积、第二次结果不受第一次污染；单次探测内的降级/失败记录（含 adapter 方法内部记录的）都保留在该次 `result.warnings` 里。
 - **launch environment 服务**：宿主还 provide `DSH_LAUNCH_ENVIRONMENT_KEY`（`dsh/lib/profile-boot-QhDEDXsF.js:316`），但该包（`@deepseek-ai/dsh-launch-environment`）不在提取清单，字段未核对，本任务不用。
 - **tools 注册/定义形状**：`defineTool` 的 `output` 必须 `{ schema, render }`，render 返回 `[{ type: 'text', text }]`（`dsh-tools/lib/index.js:310-359`；输出 schema 投影 `:366-381`）。本插件 `stow_probe` 照 WhaleBuddy 已跑通的形状写。
 
 ## 8. 验证状态（D5：不修改真实 profile / 不重启 DSH）
 
-- 任务书 Step 5「装进测试 profile 并重启验证」：**not-run**（按 D5）。未执行 `dsh plugin --profile ... add`，未重启 DSH，未起第二个服务。
+- 任务书 Step 5「装进测试 profile 并重启验证」：**not-run**（按 D5）。本任务未执行 `dsh plugin --profile ...`、未创建/写入任何 profile、未重启 DSH、未起第二个服务；也未注册任何 HTTP 路由（Task 0 无端点）。
 - 已完成的替代验证：
   - 契约核对：上文全部结论均带 文件:行号 证据。
-  - 单元测试：`node --test test/*.test.js` → 10/10 PASS（fake ctx 覆盖「服务齐全」与「服务缺失/抛错降级」）。
+  - 单元测试：`node --test test/*.test.js` → 13/13 PASS（fake ctx 覆盖服务齐全、缺失/抛错降级、patch 解析失败、warnings 快照不累积、profile 兜底）。
   - 语法校验：`node --check lib/index.js`、`node --check client.js`、`node --check lib/host.js`、`node --check lib/probe.js` 全过。
   - 真实 profile **只读**冒烟：`listPlugins()` 读 desktop profile → 29 行（npm 18 / patch 11），`warnings: []`，未写任何文件。
-- **手动验证步骤（留给人，未执行）**：
-  1. `dsh plugin --profile <test-profile> add F:/归置`（只用测试 profile，不碰 desktop）；
-  2. 重启/新开 DSH（用户手动，非本任务）；
-  3. 侧栏出现「归置」行；点开面板看到「归置」+「版本 0.1.0」；
-  4. 会话中调用 `stow_probe`，返回 `{tools, plugins, skills, sessionEvents, profilePath, dshVersion, warnings}`；
-  5. `curl http://127.0.0.1:<port>/api/guizhi/health` 返回同一 JSON；非 loopback 请求应 403；
-  6. 记录实际 `tools/skills` 数量，并确认 `dshVersion` 是真实版本还是 `unknown`（若 unknown，把运行时信息补进 host-notes）。
-- 未验证项（Task 2 及以后覆盖）：面板真机渲染、路由真机可达性、`stow_probe` 在 agent 工具面中的注册与调用、`sessionEvents` 对真实会话日志的读取与性能。
+- **手动验证步骤（留给人，本轮仍 not-run；安装命令与启动命令成对，端口从启动输出/浏览器地址获得）**：
+
+  **第 0 步：拿到本机 CLI（不在 PATH，用安装包自带入口）**
+  - 本机安装目录 `F:\DSH_offical`，入口 `F:\DSH_offical\resources\runtime\cli\bin\dsh.cmd`。该 `dsh.cmd` 以 `ELECTRON_RUN_AS_NODE=1` 调 `DeepSeek Harness.exe --expose-internals app.asar\dsh\node_modules\@deepseek-ai\dsh-desktop-host\lib\cli.js`，所以不依赖 PATH 里有 `dsh`。
+  - 自检：`"F:\DSH_offical\resources\runtime\cli\bin\dsh.cmd" --version` → 期望 `0.2.2-rc.5`（本机基线）。
+
+  **第 1 步：创建测试 profile（只碰 guizhi-test，不碰 desktop / web）**
+  - 创建 + 启动：`"F:\DSH_offical\resources\runtime\cli\bin\dsh.cmd" --profile guizhi-test --from-default-profile web`
+  - 它把随包 web 模板（bundle 列表 `@deepseek-ai/dsh-base` + `@deepseek-ai/dsh-web-app`，见本机 `~/.dsh/profiles/web/package.json`）复制成 `%USERPROFILE%\.dsh\profiles\guizhi-test`，然后启动该 profile 的 Web GUI。宿主实现 `initializeProfileFromDefault`（`dsh/lib/profile-boot-QhDEDXsF.js:147`）先写 `.<name>.staging-*` 再 rename，失败会还原，不会留半个 profile。
+  - **只在首次创建时带 `--from-default-profile web`**；以后启动不要带，否则会用模板重建 profile、已装插件被清掉。
+  - 看到 Web GUI 后在本终端 Ctrl+C 退出，继续第 2 步。
+
+  **第 2 步：把仓库装进测试 profile**
+  - `"F:\DSH_offical\resources\runtime\cli\bin\dsh.cmd" plugin --profile guizhi-test add "F:/归置"`
+  - `plugin` 子命令把剩余参数原样转给 pnpm（`dsh/lib/bin-CwxESKe-.js:116`），且该 profile「首次使用时初始化」（同一行帮助文本）；绝对本地目录是插件管理器接受的安装 spec（`dsh-plugin-manager/lib/types/tools.js:11`：npm 包名 / git URL / tarball URL / 绝对本地目录）。
+  - 期望：pnpm 安装成功；`%USERPROFILE%\.dsh\profiles\guizhi-test\node_modules\` 下出现 `@fanyingnie/dsh-guizhi`，且 bundle/插件列表出现该 bundle。
+
+  **第 3 步：用测试 profile 启动 DSH**
+  - `"F:\DSH_offical\resources\runtime\cli\bin\dsh.cmd" --profile guizhi-test`
+  - **端口怎么获得**：Web 应用启动时会打印一条带 token 的 URL，并默认自动打开默认浏览器（`@deepseek-ai/dsh-web-app` 包 README：Startup prints a tokenized URL and normally opens the default browser；`--no-open` 可关闭自动打开）——端口就在这条 URL / 自动打开的浏览器地址栏里。本机当前 desktop 实例的 GUI 地址是 `http://127.0.0.1:65239`，重启后会变，仅作对照。Task 0 **没有** HTTP 路由，不需要 curl 任何 `/api/guizhi/*`（路由在 Task 7 实现并有测试）。
+  - **注**：desktop profile 由 Electron 应用独占（CLI 拒绝管理/启动 desktop，`dsh/lib/bin-CwxESKe-.js:35`）；`guizhi-test` 是自定义 profile，可这样启动；验证期间已开的 Desktop 可以同时存在、互不干扰。
+  - **如何确认插件已加载**：① 设置（Settings）左侧出现「插件」分区（`dsh-client-ui-settings-plugins` 注册 `settings.section` id=`plugins`、order=15）；② 插件/bundle 列表出现 `@fanyingnie/dsh-guizhi` 且启用；③ 左侧栏出现「归置」行；④ 启动日志若报告被跳过的 bundle（`reportSkippedBundles`，`dsh/lib/profile-boot-QhDEDXsF.js:217-225`）说明该 bundle 未挂载。
+
+  **第 4 步：面板与工具**
+  - 点开侧栏「归置」：只应看到标题「归置」+ 一行「版本 0.1.0」（Task 0 Step 4 的最小面）。
+  - 会话里调用 `stow_probe`，返回 `{tools, plugins, skills, sessionEvents, profilePath, dshVersion, warnings}`；记录实际 `tools/plugins/skills` 数量与 `dshVersion`（若为 `unknown`，把运行时可探测到的信息补进本文件「其他关键事实」）。
+
+- 未验证项（not-run，不是 pass）：面板真机渲染、`stow_probe` 在 agent 工具面中的注册与调用、`sessionEvents` 对真实会话日志的读取与性能、Task 7 的 `/api/guizhi` 路由真机可达性。
 
 ## 9. 相对任务书的决策记录（与裁决一致的偏离）
 
@@ -147,4 +168,4 @@
 - D11：仅 `lib/index.js` import `@deepseek-ai/dsh-tools`；测试只 import `lib/host.js`/`lib/probe.js`。
 - D12：`sessionEvents` 走 `sessionQuery`（`listSessions` + `readSession`），不手写 `.zstd` 解码（见 ④）。
 - D15：`pnpm install` 生成并提交 `pnpm-lock.yaml`（yaml 2.9.1）。
-- 附加（超出任务书的最小项）：Task 0 额外挂 `GET /api/guizhi/health`（只读、loopback-only、`scope.effect` 回收），用于「不重启也能由面板/curl 验证 probe」的后续手动步骤；不改变 HostAdapter 固定接口。
+- 附加（超出任务书的最小项）：无。`GET /api/guizhi/health` 按裁决整体删除，HTTP 路由留给 Task 7（`/api/guizhi` 前缀、带测试）；HostAdapter 的 `warnings` / `takeWarnings()` 为文档化的 additive 诊断扩展（见「其他关键事实」），六方法接口不变。
