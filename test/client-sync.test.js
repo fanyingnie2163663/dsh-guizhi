@@ -98,4 +98,13 @@ test('client.js（UX）：三屏标签为 整理/场景/工作流，扫描技术
   assert.equal(source.includes("'地图操作'"), false)
 })
 
+test('client.js（一键整理）：按钮、pipeline 路由与结果摘要', async () => {
+  const source = await readClientSource()
+  assert.ok(source.includes('一键整理'))
+  assert.ok(source.includes("apiRequest('pipeline'"))
+  assert.ok(source.includes("kind: 'pipeline'"))
+  assert.ok(source.includes('已自动应用'))
+})
+
+
 

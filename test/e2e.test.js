@@ -229,7 +229,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   const noMap = await call(ROUTE_PATHS.gaps, {})
   assert.equal(noMap.status, 400)
   assert.equal(noMap.json.code, 'NO_MAP')
-  assert.match(noMap.json.error, /地图/)
+  assert.match(noMap.json.error, /工作流/)
   await assert.rejects(stat(stateFile('proposals')), { code: 'ENOENT' })
   assert.equal((await store.read('proposals')).value, null, 'NO_MAP 不得覆盖旧提案')
 

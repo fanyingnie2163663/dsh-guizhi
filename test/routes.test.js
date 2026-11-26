@@ -250,9 +250,9 @@ function assertFailure(response, status, pattern) {
 // Route table
 // ---------------------------------------------------------------------------
 
-test('路由表：11 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATHS 一一对应', () => {
+test('路由表：12 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATHS 一一对应', () => {
   const routes = createRoutes({ deps: makeDeps() })
-  assert.equal(routes.length, 11)
+  assert.equal(routes.length, 12)
   for (const route of routes) {
     assert.ok(route.method === 'GET' || route.method === 'POST', 'method 只能是 GET/POST')
     assert.equal(typeof route.path, 'string')
@@ -261,7 +261,7 @@ test('路由表：11 条 root-absolute /api/guizhi 路由，方法与 ROUTE_PATH
   }
   assert.deepEqual(routes.map((route) => route.path).sort(), Object.values(ROUTE_PATHS).sort())
   assert.equal(routeOf(routes, ROUTE_PATHS.state).method, 'GET')
-  for (const key of ['scan', 'scenarios', 'map', 'pack', 'gaps', 'preview', 'apply', 'rollback', 'draft', 'dispatch']) {
+  for (const key of ['scan', 'scenarios', 'map', 'pack', 'gaps', 'preview', 'apply', 'rollback', 'draft', 'dispatch', 'pipeline']) {
     assert.equal(routeOf(routes, ROUTE_PATHS[key]).method, 'POST', key + ' 必须是 POST')
   }
 })
@@ -509,7 +509,7 @@ test('POST pack：没有地图时返回 400 NO_MAP，不写提案也不导出文
   cleanup.push(home)
   const store = createFakeStore()
   const response = await call(makeDeps({ store, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
-  assertFailure(response, 400, /地图/)
+  assertFailure(response, 400, /工作流/)
   assert.equal(response.json.code, 'NO_MAP')
   assert.deepEqual(store.writes, [], '无地图不得写 proposals')
   await assertNoPacksExport(home)
@@ -701,7 +701,7 @@ test('POST gaps：没有地图返回 400 NO_MAP 且不写 proposals（D7 追加�
     ROUTE_PATHS.gaps,
     {},
   )
-  assertFailure(response, 400, /地图/)
+  assertFailure(response, 400, /工作流/)
   assert.equal(response.json.code, 'NO_MAP')
   assert.deepEqual(store.writes, [])
 })
@@ -1191,4 +1191,53 @@ test('GET state：不支持派单的宿主也返回 200 + dispatchSupported=fals
   assert.equal(response.json.dispatchSupported, false)
   assert.equal(response.json.dispatch.state, 'unknown')
 })
+
+// ---------------------------------------------------------------------------
+// POST pipeline (one-click 整理)
+// ---------------------------------------------------------------------------
+
+test('POST pipeline：无工作流时 400 NO_MAP，不写提案/能力包', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pipeline-'))
+  cleanup.push(home)
+  const store = createFakeStore({ scan: sampleScan() })
+  const response = await call(makeDeps({ store, home, catalog: async () => ({ entries: [], stale: false, error: null }) }), ROUTE_PATHS.pipeline, {})
+  assertFailure(response, 400, /工作流|NO_MAP/)
+  assert.equal(response.json.code, 'NO_MAP')
+  assert.deepEqual(store.writes.filter((write) => write.name === 'proposals'), [])
+  await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' })
+})
+
+test('POST pipeline：扫描→查缺补漏→能力包→预览→应用 pack 一步完成并可回滚', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pipeline-'))
+  cleanup.push(home)
+  const store = createFakeStore({ map: sampleMap(), scan: sampleScan() })
+  const deps = makeDeps({ store, home, catalog: async () => ({ entries: [], stale: false, error: null }) })
+  const response = await call(deps, ROUTE_PATHS.pipeline, {})
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.deepEqual(response.json.steps.map((step) => step.id), ['scan', 'gaps', 'pack', 'preview', 'apply'])
+  assert.ok(response.json.pack.id, '能力包 id 必须存在')
+  assert.equal(response.json.preview.itemCount, 1)
+  assert.equal(response.json.apply.applied.length, 1)
+  assert.ok(response.json.apply.applied.length === 1)
+  assert.ok(typeof response.json.apply.snapshotId === 'string' && response.json.apply.snapshotId !== '')
+  const file = await stat(join(home, 'packs', response.json.pack.id + '.json'))
+  assert.ok(file.isFile(), '一键整理必须导出能力包文件')
+  assert.equal(store.writes.some((write) => write.name === 'scan'), true)
+  assert.equal(store.writes.some((write) => write.name === 'packs'), true)
+  const stored = (await store.read('proposals')).value
+  assert.equal(stored.items.some((item) => item.kind === 'pack'), true)
+})
+
+test('POST pipeline：目录不可达时 fail-open，仍生成并应用能力包', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pipeline-'))
+  cleanup.push(home)
+  const store = createFakeStore({ map: sampleMap(), scan: sampleScan() })
+  const catalog = async () => ({ entries: [], stale: true, error: '目录不可达' })
+  const response = await call(makeDeps({ store, home, catalog }), ROUTE_PATHS.pipeline, {})
+  assert.equal(response.status, 200)
+  assert.equal(response.json.gaps.error, '目录不可达')
+  assert.equal(response.json.apply.applied.length, 1)
+  await stat(join(home, 'packs', response.json.pack.id + '.json'))
+})
+
 

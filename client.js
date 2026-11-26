@@ -760,6 +760,17 @@
         })
       }
 
+      /** One-click chain: scan → gaps → pack → preview → apply pack proposals. */
+      function onPipeline() {
+        runAction('一键整理', function () {
+          return apiRequest('pipeline', { method: 'POST', body: {} })
+        }, function (payload) {
+          var applied = payload !== null && typeof payload === 'object' && payload.apply !== null && typeof payload.apply === 'object' ? payload.apply : null
+          if (applied !== null && typeof applied.snapshotId === 'string' && applied.snapshotId !== '') setSnapshotId(applied.snapshotId)
+          setResult({ kind: 'pipeline', payload: payload })
+        })
+      }
+
       function onGaps() {
         runAction('查缺补漏', function () {
           return apiRequest('gaps', { method: 'POST', body: {} })
@@ -1378,6 +1389,29 @@
             h('p', { className: 'gz-result-ok' }, icon('check', 13), h('span', {}, '快照已恢复（restored: ' + String(payload.restored === true) + '）')),
           ])
         }
+        if (result.kind === 'pipeline') {
+          var steps = Array.isArray(payload.steps) ? payload.steps : []
+          var applied = payload.apply !== null && typeof payload.apply === 'object' ? payload.apply : null
+          var pack = payload.pack !== null && typeof payload.pack === 'object' ? payload.pack : {}
+          var stepRows = steps.map(function (step, stepIndex) {
+            var status = step !== null && typeof step === 'object' && typeof step.status === 'string' ? step.status : 'ok'
+            var label = step !== null && typeof step === 'object' && typeof step.label === 'string' ? step.label : ''
+            var detail = step !== null && typeof step === 'object' && typeof step.detail === 'string' ? step.detail : ''
+            return h('li', { key: 'pipeline-step-' + stepIndex, className: status === 'warn' ? 'gz-status-warn' : '' }, label + '：' + detail)
+          })
+          var pipelineChildren = [
+            h('ul', { className: 'gz-warn-list' }, stepRows),
+            h('p', { className: 'gz-result-meta' }, '能力包：' + String(pack.id || '') + '（工具 ' + String(Array.isArray(pack.tools) ? pack.tools.length : 0) + ' 个 / 技能 ' + String(Array.isArray(pack.skills) ? pack.skills.length : 0) + ' 个）'),
+          ]
+          if (applied !== null && typeof applied.error === 'string' && applied.error !== '') {
+            pipelineChildren.push(h('p', { className: 'gz-result-err' }, icon('alert', 13), h('span', {}, '应用失败：' + applied.error)))
+          } else if (applied !== null) {
+            pipelineChildren.push(h('p', { className: 'gz-result-ok' }, icon('check', 13), h('span', {}, '已自动应用 ' + String(Array.isArray(applied.applied) ? applied.applied.length : 0) + ' 条 pack 提案' + (typeof applied.snapshotId === 'string' ? '，快照 ' + applied.snapshotId + '（已填入回滚框）' : ''))))
+          }
+          pipelineChildren.push(renderWarningDetails(payload.warnings, '警告'))
+          var hasWarn = (applied !== null && typeof applied.error === 'string' && applied.error !== '') || (payload.gaps !== null && typeof payload.gaps === 'object' && typeof payload.gaps.error === 'string' && payload.gaps.error !== '')
+          return resultCard(hasWarn ? 'warn' : 'success', '一键整理完成', pipelineChildren)
+        }
         if (result.kind === 'draft') {
           return resultCard('info', '派单草稿（面板不会代发）', [
             h('textarea', { className: 'gz-input gz-draft', readOnly: true, value: typeof payload.text === 'string' ? payload.text : draftText, 'aria-label': '派单草稿文本' }),
@@ -1402,10 +1436,11 @@
         var busy = action.busy !== ''
         return h('div', { className: 'gz-actionbar', role: 'group', 'aria-label': '工作流操作' },
           h('div', { className: 'gz-actionbar-main' },
+            h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: busy, onClick: onPipeline }, '一键整理'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onGaps }, '查缺补漏'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPack }, '生成工具包'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPreview }, '预览变更'),
-            h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: busy, onClick: onApply }, '应用'),
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onApply }, '应用'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onDraft }, '生成派单草稿'),
           ),
           h('div', { className: 'gz-actionbar-snap' },
