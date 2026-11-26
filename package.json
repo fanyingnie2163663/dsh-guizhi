@@ -1,6 +1,8 @@
 {
   "name": "@fanyingnie/dsh-guizhi",
   "version": "0.1.0",
+  "description": "归置（Stow）：按你的工作流归置 DSH 插件、工具与技能，生成可导出能力包",
+  "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -9,8 +11,35 @@
     "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
+  "files": [
+    "lib",
+    "client.js",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "guizhi",
+    "stow",
+    "capability-pack",
+    "tooling",
+    "inventory",
+    "skills"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fanyingnie/dsh-guizhi.git"
+  },
+  "homepage": "https://github.com/fanyingnie/dsh-guizhi#readme",
+  "bugs": {
+    "url": "https://github.com/fanyingnie/dsh-guizhi/issues"
   },
   "dependencies": {
     "yaml": "^2.5.0"
