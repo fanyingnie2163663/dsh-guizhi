@@ -254,14 +254,31 @@
     return tool.used30d == null ? '未知' : String(tool.used30d) // eslint-disable-line eqeqeq
   }
 
-  /** True when every scanned tool has null/undefined usage (the scan could not know). */
+  /**
+   * True when the scan HAS tools but every one has null/undefined usage (the
+   * scan could not know). F7: an empty tool list is not "unknown" — there is
+   * nothing to show, so the 用量未知 note must not appear.
+   */
   function usageUnknown(scan) {
-    if (scan === null || typeof scan !== 'object' || !Array.isArray(scan.tools) || scan.tools.length === 0) return true
+    if (scan === null || typeof scan !== 'object' || !Array.isArray(scan.tools)) return true
+    if (scan.tools.length === 0) return false
     for (var index = 0; index < scan.tools.length; index += 1) {
       var tool = scan.tools[index]
       if (tool !== null && typeof tool === 'object' && tool.used30d != null) return false // eslint-disable-line eqeqeq
     }
     return true
+  }
+
+  /**
+   * Truncate one string by code points (Array.from), so a surrogate pair is
+   * never split. F7: identical to lib/scenarios.js truncateCustom, which the
+   * map route now reuses on the host half.
+   * @param {unknown} value @param {number} max @returns {string}
+   */
+  function truncateByCodePoints(value, max) {
+    var text = value === undefined || value === null ? '' : String(value)
+    var chars = Array.from(text)
+    return chars.length > max ? chars.slice(0, max).join('') : text
   }
 
   /** Owners joined for display; empty means "not attributed", shown as a dash. */
@@ -450,7 +467,7 @@
       function onCustomChange(event) {
         var value = event !== null && event !== undefined && event.target !== null && event.target !== undefined ? event.target.value : ''
         setScenarioDraft(function (previous) {
-          return { selected: previous.selected.slice(), custom: String(value === undefined || value === null ? '' : value).slice(0, CUSTOM_MAX_CHARS), touched: true }
+          return { selected: previous.selected.slice(), custom: truncateByCodePoints(value, CUSTOM_MAX_CHARS), touched: true }
         })
       }
 
@@ -688,7 +705,7 @@
               value: custom,
               onChange: onCustomChange,
             }),
-            h('div', { className: 'gz-counter' }, String(custom.length) + ' / ' + String(CUSTOM_MAX_CHARS)),
+            h('div', { className: 'gz-counter' }, String(Array.from(custom).length) + ' / ' + String(CUSTOM_MAX_CHARS)),
           ),
           h('div', { className: 'gz-actions gz-actions-flush' },
             h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: action.busy !== '', onClick: onSaveScenarios }, '保存场景'),
@@ -719,14 +736,13 @@
         if (result.kind === 'pack') {
           var pack = payload.pack !== null && typeof payload.pack === 'object' ? payload.pack : {}
           return h('div', { className: 'gz-result' },
-            h('h3', { className: 'gz-result-title' }, '工具包已生成'),
-            h('p', { className: 'gz-result-meta' }, '路径：' + String(payload.path || '')),
+            h('h3', { className: 'gz-result-title' }, '已生成能力包提案（等待预览/应用）'),
             h('p', { className: 'gz-result-meta' },
               'id ' + String(pack.id || '') +
               '；工具 ' + String(Array.isArray(pack.tools) ? pack.tools.length : 0) + ' 个' +
               '；技能 ' + String(Array.isArray(pack.skills) ? pack.skills.length : 0) + ' 个' +
               '；阶段 ' + String(Array.isArray(pack.stageIds) ? pack.stageIds.length : 0) + ' 个'),
-            h('p', { className: 'gz-hint' }, 'v1 只导出声明文件，不安装任何插件、不改 profile。'),
+            h('p', { className: 'gz-hint' }, '应用成功后写入 packs/<id>.json（先快照、可回滚）；v1 只导出声明文件，不安装任何插件、不改 profile。'),
           )
         }
         if (result.kind === 'preview') {

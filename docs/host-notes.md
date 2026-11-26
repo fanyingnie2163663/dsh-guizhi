@@ -76,7 +76,7 @@
 - `tool/call` 事件的持久化结构：`dsh-tools/lib/types/batch.js:210-212` 写入 `{ turn, step, callId, name, arguments }`；工具名字段是 `event.data.name`（旁证：`dsh-session-query/lib/index.js:585` `case "tool/call": return joinText([event.data.name, event.data.arguments])`）。
 - 事件时间戳是 `event.time`（毫秒 epoch，配对用法见 `dsh-session-stats/lib/types/projection.js:123-124`）；事件类型登记在 `dsh-session/lib/types/known-event-types.js:75`（`'tool/call'`）。
 
-**本插件实现**：`sessionEvents(sinceISO?)` 返回 `AsyncIterable<{tool, at, sessionId}>`：`listSessions()` → 逐会话 `readSession(id)` → 过滤 `type === 'tool/call'` → `tool = data.name`、`at = new Date(event.time).toISOString()`、`sessionId = header.id`；`sinceISO` 按 `event.time` 过滤。服务不可用返回 **null**（不抛错）。
+**本插件实现**：`sessionEvents(sinceISO?)` 返回 `AsyncIterable<{tool, at, sessionId}>`：`listSessions()` →（F5：给了 `sinceISO` 时先用 `header.createdAt` 预过滤窗口外会话，缺失 `createdAt` 保守保留）→ 逐会话 `readSession(id)` → 过滤 `type === 'tool/call'` → `tool = data.name`、`at = new Date(event.time).toISOString()`、`sessionId = header.id`；`sinceISO` 仍按 `event.time` 做精确过滤。服务不可用返回 **null**（不抛错）。
 
 性能备注：Task 0 不缓存；Task 2 统计近 30 天时先做时间窗裁剪/按会话时间排序，避免全量 `readSession`。
 
@@ -90,7 +90,7 @@
   - `sidebar.panellist`：左侧栏的面板行（`dsh-whalebuddy/lib/client.js:15-24` 注释 + 常量 `:35-38`）；sidebar 客户端 bundle 内也含该字面量（`dsh-client-ui-sidebar/lib/client.js:2`，单行打包文件）。
   - `main`：主区页面，`key` 与行 `id` 相同（`dsh-whalebuddy/lib/client.js:37`、`:2867-2871`）。
 - 已装插件同契约样例：`@linxin666/dsh-client-ui-skill-explorer/lib/client.js:1-3`（同一 `window.__ModuleLoader__.load({id, factory})` 形态）。
-- **本插件**：`dsh.client = { platform: 'web', inject: [] }`（D4，照 WhaleBuddy）；`client.js` 用 loader 注册 `sidebar.panellist` 行「归置」+ `main` 页面（只显示标题与版本 0.1.0）；slots 缺失只 `console.warn`，不抛错。
+- **本插件**：`dsh.client = { platform: 'web', inject: [] }`（D4，照 WhaleBuddy）；`client.js` 用 loader 注册 `sidebar.panellist` 行「归置」+ `main` 三屏面板（清爽 / 场景 / 地图，真机三屏验证步骤见 [docs/DEMO.md](DEMO.md) §4.2）；slots 缺失只 `console.warn`，不抛错。
 
 ### 往对话输入框塞草稿：**不可用**
 
@@ -151,7 +151,7 @@
   - **如何确认插件已加载**：① 设置（Settings）左侧出现「插件」分区（`dsh-client-ui-settings-plugins` 注册 `settings.section` id=`plugins`、order=15）；② 插件/bundle 列表出现 `@fanyingnie/dsh-guizhi` 且启用；③ 左侧栏出现「归置」行；④ 启动日志若报告被跳过的 bundle（`reportSkippedBundles`，`dsh/lib/profile-boot-QhDEDXsF.js:217-225`）说明该 bundle 未挂载。
 
   **第 4 步：面板与工具**
-  - 点开侧栏「归置」：只应看到标题「归置」+ 一行「版本 0.1.0」（Task 0 Step 4 的最小面）。
+  - 点开侧栏「归置」：按 [docs/DEMO.md](DEMO.md) §4.2 的三屏验证步骤检查（清爽 / 场景 / 地图 三屏可切换、扫描后数字变化、用量未知显示「未知」、地图页能力点可展开证据、生成工具包结果区为提案语义）；不再只验证「标题 + 版本」的最小面。
   - 会话里调用 `stow_probe`，返回 `{tools, plugins, skills, sessionEvents, profilePath, dshVersion, warnings}`；记录实际 `tools/plugins/skills` 数量与 `dshVersion`（若为 `unknown`，把运行时可探测到的信息补进本文件「其他关键事实」）。
 
 - 未验证项（not-run，不是 pass）：面板真机渲染、`stow_probe` 在 agent 工具面中的注册与调用、`sessionEvents` 对真实会话日志的读取与性能、Task 7 的 `/api/guizhi` 路由真机可达性。

@@ -473,6 +473,34 @@ test('R-8A：/pack 后改地图，apply 仍导出生成时的 pack；preview ite
   assert.deepEqual((await store.read('packs')).value.packs[0], generated)
 })
 
+test('R-6B：重新 /pack 同 id 包后二次 apply 覆盖，回滚第二次恢复第一版内容（端到端）', async () => {
+  const { home, call } = await createHarness('guizhi-e2e-')
+  const tab = { stageIds: ['understand', 'deliver'], title: '研发交付包' }
+  assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read']) })).status, 200)
+  const firstPack = (await call(ROUTE_PATHS.pack, tab)).json.pack
+  assert.deepEqual(firstPack.tools, ['read', 'edit'])
+  const firstApply = await call(ROUTE_PATHS.apply, { ids: [firstPack.id] })
+  assert.equal(firstApply.status, 200, JSON.stringify(firstApply.json))
+  const file = join(home, 'packs', firstPack.id + '.json')
+  assert.deepEqual(await readJson(file), firstPack)
+  // 改地图后重新生成：同 proposal/pack id，工具集不同（模拟契约 F1 的「apply v1 → 改 map → 再 apply」）
+  assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read', 'write']) })).status, 200)
+  const secondPack = (await call(ROUTE_PATHS.pack, tab)).json.pack
+  assert.equal(secondPack.id, firstPack.id, '同 title+stageIds 的 pack id 必须相同')
+  assert.deepEqual(secondPack.tools, ['read', 'write', 'edit'])
+  const secondApply = await call(ROUTE_PATHS.apply, { ids: [firstPack.id] })
+  assert.equal(secondApply.status, 200, JSON.stringify(secondApply.json))
+  assert.deepEqual(await readJson(file), secondPack, '第二次 apply 覆盖旧包')
+  // 回滚第二份快照：必须恢复第一版内容，不能删除快照前已存在的包
+  const secondRollback = await call(ROUTE_PATHS.rollback, { snapshotId: secondApply.json.snapshotId })
+  assert.equal(secondRollback.status, 200, JSON.stringify(secondRollback.json))
+  assert.deepEqual(await readJson(file), firstPack, 'R-6B：回滚第二次 apply 恢复到第一版字节')
+  // 第一份快照里该文件是新建的 → 回滚删除
+  const firstRollback = await call(ROUTE_PATHS.rollback, { snapshotId: firstApply.json.snapshotId })
+  assert.equal(firstRollback.status, 200, JSON.stringify(firstRollback.json))
+  await assert.rejects(stat(file), { code: 'ENOENT' })
+})
+
 test('R-8A：提案存在但 store(packs) 缺失该包 → apply 400 PACK_NOT_FOUND，不落 packs/ 文件', async () => {
   const { home, call } = await createHarness('guizhi-e2e-')
   assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read']) })).status, 200)
