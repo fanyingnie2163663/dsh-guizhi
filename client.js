@@ -29,6 +29,7 @@
   var SLOT_MAIN = 'main'
   /** Row order among the shell's global panel rows (Plugins 0, Schedule 10, skill center 30). */
   var PANEL_ORDER = 45
+  /** The only version constant in the browser half (Task 0 renders it verbatim). */
   var PLUGIN_VERSION = '0.1.0'
   var STYLE_MARKER = 'data-guizhi-style'
 
@@ -39,14 +40,10 @@
     var style = document.createElement('style')
     style.setAttribute(STYLE_MARKER, '')
     style.textContent = [
-      '.gz-root{display:flex;flex-direction:column;gap:16px;box-sizing:border-box;height:100%;padding:28px 32px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);overflow:auto}',
+      '.gz-root{display:flex;flex-direction:column;gap:12px;box-sizing:border-box;height:100%;padding:28px 32px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base);overflow:auto}',
       '.gz-root *{box-sizing:border-box}',
-      '.gz-header{display:flex;flex-direction:column;gap:4px}',
       '.gz-title{margin:0;font-size:22px;line-height:1.25;font-weight:600;letter-spacing:.02em}',
-      '.gz-subtitle{margin:0;font-size:13px;line-height:1.6;color:var(--dsw-alias-label-secondary)}',
-      '.gz-card{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:18px 20px;background:var(--dsw-alias-bg-l1);display:flex;flex-direction:column;gap:10px;max-width:640px}',
-      '.gz-version{margin:0;font-size:13px;font-weight:600;letter-spacing:.03em}',
-      '.gz-hint{margin:0;font-size:12px;line-height:1.7;color:var(--dsw-alias-label-secondary)}',
+      '.gz-version{margin:0;font-size:13px;font-weight:600;letter-spacing:.03em;color:var(--dsw-alias-label-secondary)}',
     ].join('\n')
     document.head.appendChild(style)
   }
@@ -78,22 +75,8 @@
       return React.createElement(
         'div',
         { className: 'gz-root', 'data-dsh-plugin': 'guizhi' },
-        React.createElement(
-          'header',
-          { className: 'gz-header' },
-          React.createElement('h1', { className: 'gz-title' }, '归置'),
-          React.createElement('p', { className: 'gz-subtitle' }, '按工作流归置你的 DSH 工具箱'),
-        ),
-        React.createElement(
-          'section',
-          { className: 'gz-card' },
-          React.createElement('p', { className: 'gz-version' }, '版本 ' + PLUGIN_VERSION),
-          React.createElement(
-            'p',
-            { className: 'gz-hint' },
-            '脚手架阶段：面板只显示标题与版本号；插件/工具/技能扫描、场景与工作流地图在后续任务接入。',
-          ),
-        ),
+        React.createElement('h1', { className: 'gz-title' }, '归置'),
+        React.createElement('p', { className: 'gz-version' }, '版本 ' + PLUGIN_VERSION),
       )
     }
   }

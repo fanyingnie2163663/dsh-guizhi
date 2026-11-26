@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createHostAdapter, detectDshVersion } from '../lib/host.js'
+import { createHostAdapter, detectDshVersion, detectProfileName, resolveProfilePath } from '../lib/host.js'
 import { probeHost } from '../lib/probe.js'
 
 /** Temp roots removed after the suite. */
@@ -40,6 +40,23 @@ async function makeProfileFixture() {
     '  name: "@deepseek-ai/dsh-client-ui-theme"',
     '',
   ].join('\n'))
+  return dir
+}
+
+/**
+ * A profile fixture whose cordis.patch.yml is unparseable while package.json
+ * stays readable: npm rows must survive the patch parse failure.
+ * @returns {Promise<string>} fixture directory
+ */
+async function makeBrokenPatchFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'guizhi-bad-patch-'))
+  cleanup.push(dir)
+  await writeFile(join(dir, 'package.json'), JSON.stringify({
+    name: 'dsh-profile-broken-patch',
+    private: true,
+    dependencies: { 'dsh-ops': '0.5.5' },
+  }, null, 2))
+  await writeFile(join(dir, 'cordis.patch.yml'), '- insert: [unclosed\n')
   return dir
 }
 
@@ -265,4 +282,60 @@ test('detectDshVersion：环境变量优先，其次从 argv 向上找 @deepseek
   await writeFile(join(deep, 'bin.js'), '')
   await writeFile(join(root, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.2-rc.5' }))
   assert.equal(detectDshVersion({ env: {}, argv: [join(deep, 'bin.js')], execPath: '' }), '0.2.2-rc.5')
+})
+
+test('cordis.patch.yml 解析失败：有 warning，且不把结果当成「没装插件」（npm 行保留）', async () => {
+  const dir = await makeBrokenPatchFixture()
+  const adapter = createHostAdapter(fakeCtx({
+    profileContext: { name: 'broken', dir, patchPath: join(dir, 'cordis.patch.yml') },
+    // A wrong implementation would treat the unreadable patch as "no plugins"
+    // and fall back to this inventory; asserting its entry stays absent proves
+    // the npm rows from package.json were kept instead.
+    pluginInventory: { async list() { return { entries: [{ moduleName: 'inventory-only-plugin' }] } } },
+  }))
+  const plugins = await adapter.listPlugins()
+  assert.deepEqual(plugins, [{ name: 'dsh-ops', version: '0.5.5', source: 'npm' }])
+  const warnings = adapter.warnings
+  assert.ok(
+    warnings.some((message) => message.includes('读取 profile cordis.patch.yml 失败')),
+    'patch 解析失败必须留下明确的 warning：' + JSON.stringify(warnings),
+  )
+})
+
+test('probeHost warnings 是快照：连续两次不累积，第二次不被第一次污染（Minor 3）', async () => {
+  const logged = []
+  const adapter = createHostAdapter(fakeCtx({}, logged), { env: {}, argv: [], execPath: '' })
+  const first = await probeHost(adapter)
+  assert.ok(first.warnings.length >= 4, '缺失能力应有警告：' + JSON.stringify(first.warnings))
+  assert.deepEqual(adapter.warnings, [], '一次 probe 结束后 adapter 内部队列应已清空')
+  const second = await probeHost(adapter)
+  assert.notStrictEqual(second.warnings, first.warnings, 'warnings 必须是每次调用的独立快照')
+  assert.deepEqual(second.warnings, first.warnings, '第二次结果不应追加第一次的历史警告')
+  first.warnings.push('调用方篡改')
+  const third = await probeHost(adapter)
+  assert.deepEqual(third.warnings, second.warnings, '调用方改 result.warnings 不得影响后续探测')
+  assert.deepEqual(adapter.warnings, [], 'adapter.warnings 应是只读快照，不暴露内部队列')
+  assert.deepEqual(adapter.takeWarnings(), [], 'takeWarnings 取走后必须为空')
+})
+
+test('profileContext 缺失：profilePath 走 env DSH_PROFILE / argv --profile 兜底', async () => {
+  const home = join(tmpdir(), 'guizhi-home-fallback')
+  const viaEnv = createHostAdapter(fakeCtx({}), { env: { DSH_PROFILE: 'env-profile', DSH_HOME: home }, argv: [] })
+  assert.equal(viaEnv.profilePath(), join(home, 'profiles', 'env-profile'))
+
+  const viaArgv = createHostAdapter(fakeCtx({}), { env: {}, argv: ['node', 'dsh', '--profile', 'argv-profile'], home })
+  assert.equal(viaArgv.profilePath(), join(home, 'profiles', 'argv-profile'))
+
+  const ctxWins = createHostAdapter(
+    fakeCtx({ profileContext: { dir: join(home, 'from-context') } }),
+    { env: { DSH_PROFILE: 'env-profile', DSH_HOME: home }, argv: [] },
+  )
+  assert.equal(ctxWins.profilePath(), join(home, 'from-context'))
+
+  assert.equal(resolveProfilePath(fakeCtx({}), { env: {}, argv: [], home }), '')
+  assert.equal(detectProfileName(['node', 'dsh', '--profile', 'name-a']), 'name-a')
+  assert.equal(detectProfileName(['node', 'dsh', '--profile=name-b']), 'name-b')
+  assert.equal(detectProfileName(['node', 'dsh', '--profile']), '')
+  assert.equal(detectProfileName(['node', 'dsh', '--profile', '--other']), '')
+  assert.equal(detectProfileName(undefined), '')
 })
