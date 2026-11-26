@@ -85,14 +85,14 @@ function failing(result) {
   return result.errors
 }
 
-test('schemas 导出 scan/map/pack/proposals 四个 { validate } 校验器', () => {
-  for (const name of ['scan', 'map', 'pack', 'proposals']) {
+test('schemas 导出 scan/map/pack/proposals/selections 五个 { validate } 校验器', () => {
+  for (const name of ['scan', 'map', 'pack', 'proposals', 'selections']) {
     assert.equal(typeof schemas[name]?.validate, 'function', name + '.validate 必须是函数')
   }
 })
 
 test('四个校验器对非对象输入返回失败而不是抛错', () => {
-  for (const name of ['scan', 'map', 'pack', 'proposals']) {
+  for (const name of ['scan', 'map', 'pack', 'proposals', 'selections']) {
     for (const value of [null, undefined, 'text', 42, [], true]) {
       const result = schemas[name].validate(value)
       assert.equal(result.ok, false, name + ' 应拒绝 ' + JSON.stringify(value))
@@ -321,4 +321,38 @@ test('errors 稳定：同一输入两次校验产生相同的独立错误数组'
   const second = schemas.scan.validate(bad)
   assert.deepEqual(second.errors, first.errors)
   assert.notStrictEqual(second.errors, first.errors, '每次校验返回独立数组')
+})
+
+/** @returns {object} a selections document that satisfies the D7 shape (Task 7). */
+function validSelections() {
+  return { selected: ['dev', 'content'], custom: '给客户做技术方案' }
+}
+
+test('selections：合法选择通过；严格封闭对象，selected/custom 必填且类型正确', () => {
+  assert.deepEqual(schemas.selections.validate(validSelections()), { ok: true, errors: [] })
+  assert.deepEqual(schemas.selections.validate({ selected: [], custom: '' }), { ok: true, errors: [] })
+
+  const missingCustom = validSelections()
+  delete missingCustom.custom
+  assert.ok(failing(schemas.selections.validate(missingCustom)).some((message) => message.includes('custom')))
+
+  const missingSelected = validSelections()
+  delete missingSelected.selected
+  assert.ok(failing(schemas.selections.validate(missingSelected)).some((message) => message.includes('selected')))
+
+  const badElement = validSelections()
+  badElement.selected = ['dev', 7]
+  assert.ok(failing(schemas.selections.validate(badElement)).some((message) => message.includes('selected[1]')))
+
+  const badCustom = validSelections()
+  badCustom.custom = 42
+  assert.ok(failing(schemas.selections.validate(badCustom)).some((message) => message.includes('custom')))
+
+  const unknown = validSelections()
+  unknown.extra = true
+  assert.ok(
+    failing(schemas.selections.validate(unknown)).some(
+      (message) => message.includes('未知字段') && message.includes('extra'),
+    ),
+  )
 })

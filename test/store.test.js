@@ -45,13 +45,14 @@ test('write 后 read 读回同一值，落盘是格式化 JSON', async () => {
   assert.deepEqual(await tempLeftovers(home), [])
 })
 
-test('write 覆盖旧值；四个允许的 name 都能存', async () => {
+test('write 覆盖旧值；五个允许的 name 都能存（含 Task 7 新增的 selections）', async () => {
   const { store } = await makeStore()
   for (const name of [
     'scan',
     'map',
     'proposals',
     'sources',
+    'selections',
   ]) {
     await store.write(name, { name, round: 1 })
     assert.deepEqual(await store.read(name), { value: { name, round: 1 }, error: null })
@@ -85,6 +86,17 @@ test('name 白名单：拒绝 pack 与路径穿越，不落盘', async () => {
   await assert.rejects(store.write('../scan', {}), /状态名/)
   await assert.rejects(store.read('scan/../../etc'), /状态名/)
   assert.deepEqual(await tempLeftovers(home), [])
+})
+
+test('selections：状态白名单新增 selections，可存可读并进快照', async () => {
+  const { home, store } = await makeStore()
+  const selection = { selected: ['dev', 'research'], custom: '一句话场景' }
+  await store.write('selections', selection)
+  assert.deepEqual(await store.read('selections'), { value: selection, error: null })
+  const snapshot = await store.snapshot('with-selections')
+  assert.deepEqual(snapshot.files, ['selections.json'])
+  const copied = JSON.parse(await readFile(join(home, 'snapshots', snapshot.id, 'selections.json'), 'utf8'))
+  assert.deepEqual(copied, selection)
 })
 
 test('write：不可序列化的值被拒绝并给出可读错误', async () => {
