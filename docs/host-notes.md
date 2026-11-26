@@ -156,6 +156,16 @@
 
 - 未验证项（not-run，不是 pass）：面板真机渲染、`stow_probe` 在 agent 工具面中的注册与调用、`sessionEvents` 对真实会话日志的读取与性能、Task 7 的 `/api/guizhi` 路由真机可达性。
 
+### 8.1 真机首启失败与修复（2026-11-26，desktop profile）
+
+- 现象：CLI 安装 + 重启 Desktop 后，左侧栏没有「归置」行，工具面也没有 stow_*；reportSkippedBundles 无输出（bundle 层已合成）——说明 loader 行存在，但 import 失败。
+- 定位：用 @deepseek-ai/dsh-app-boot 在 Electron-Node 里只装载 guizhi 行做隔离启动，复现：
+  guizhi (@fanyingnie/dsh-guizhi): failed to import: Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@deepseek-ai/dsh-tools' imported from F:\归置\lib\index.js。
+- 根因：本插件以 link:F:/归置 安装，属于 linked root。宿主的运行时包路由（dsh-app-boot/lib/index.js 的 ResolutionRouter.routeLinked + readPeerNames）只对「某个祖先 package.json 的 peerDependencies 里声明过」的包名做安装域拦截；此前本包只有 engines.dsh 与 dependencies.yaml，未声明 @deepseek-ai/dsh-tools，于是落回 Node 原生解析并失败。engines.dsh 能满足兼容性检查，但决定不了模块解析。
+- 修复：package.json 增加 peerDependencies: { "@deepseek-ai/dsh-tools": ">=0.2.2-rc.2 <0.3.0" }（兼容性仍由 engines.dsh 单独裁决）。
+- 回归：test/packaging.test.js 断言该 peer 声明、各入口文件存在、client.js 的 loader 注册 id 与包名一致。
+- 复核证据（隔离启动，同日）：修复前 guizhi 行 failed to import；修复后 guizhi 行 fiber state=2（ACTIVE），日志 0 条 warn/error。同批对照：dsh-ops、dsh-client-ui-weave ACTIVE；dsh-plugin-guide、dsh-context、brooks-lint 仅 pending 等待其必需服务。真实 Desktop 重启后的面板/工具验证仍需按 §8 手动步骤补做（修复未重启用户实例）。
+
 ## 9. 相对任务书的决策记录（与裁决一致的偏离）
 
 - D1：不创建根 `index.js`（`package.json` main/exports 指向 `./lib/index.js`）。

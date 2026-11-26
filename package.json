@@ -44,6 +44,9 @@
   "dependencies": {
     "yaml": "^2.5.0"
   },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.2.2-rc.2 <0.3.0"
+  },
   "engines": {
     "node": ">=24.9.0",
     "dsh": ">=0.2.2-rc.2"
