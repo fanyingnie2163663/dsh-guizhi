@@ -159,6 +159,29 @@ test('restore：未知快照 id 抛出可读错误，不做写操作', async () 
   await assert.rejects(store.restore(''), /快照 id/)
 })
 
+test('restore：meta.json 合法 JSON 但形状错误 → 抛可读错误，不假成功也不写状态', async () => {
+  const { home, store } = await makeStore()
+  await store.write('map', { version: 1 })
+  const snap = await store.snapshot('shape')
+  await store.write('map', { version: 2 })
+  const metaFile = join(home, 'snapshots', snap.id, 'meta.json')
+  const broken = [
+    { id: snap.id, tag: 'shape', createdAt: snap.createdAt, files: null },
+    { id: snap.id, tag: 'shape', createdAt: snap.createdAt, files: 'map.json' },
+    { id: snap.id, tag: 'shape', createdAt: snap.createdAt },
+    { id: 42, tag: 'shape', createdAt: snap.createdAt, files: ['map.json'] },
+    { id: 'other-snapshot', tag: 'shape', createdAt: snap.createdAt, files: ['map.json'] },
+  ]
+  for (const meta of broken) {
+    await writeFile(metaFile, JSON.stringify(meta))
+    await assert.rejects(store.restore(snap.id), /元数据已损坏|快照/, JSON.stringify(meta))
+  }
+  await writeFile(metaFile, 'null')
+  await assert.rejects(store.restore(snap.id), /元数据已损坏|快照/)
+  assert.deepEqual(await store.read('map'), { value: { version: 2 }, error: null })
+  assert.deepEqual(await tempLeftovers(home), [])
+})
+
 test('listSnapshots：只返回 id/tag/createdAt，最新在前', async () => {
   const { store } = await makeStore()
   const first = await store.snapshot('first')
