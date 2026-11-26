@@ -3,10 +3,10 @@
 - 日期：2026-11-26
 - 宿主：DeepSeek Harness 0.2.2-rc.5（本机 desktop profile）
 - 探测方式：只读官方宿主源码 + 已装插件样例 + 契约核对（按裁决 D5：**不修改真实 profile、不重启 DSH**）
-- 证据根（官方 app.asar 按 sha256 校验提取的源码）：`C:/Users/Administrator/AppData/Local/Temp/guizhi-asar/dsh-src/`
+- 证据根（官方 app.asar 按 sha256 校验提取的源码，本机临时目录）：`<临时目录>/guizhi-asar/dsh-src/`
   - 下文 `dsh-*/` 均相对该根；`dsh/lib/*` 是宿主 app 启动层。
 - 已装插件参考：`~/.dsh/profiles/desktop/node_modules/`（`@linxin666/dsh-client-ui-skill-explorer`、`dsh-better-sidebar`、`dsh-whale-widget`、`dshmarket`）
-- 骨架参考（已验证在本机 DSH 0.2.2-rc.5 运行）：`C:/Users/Administrator/Desktop/未命名项目/dsh-whalebuddy/`
+- 骨架参考（一个已在本机 DSH 0.2.2-rc.5 验证运行的插件项目）：`<本地项目>/dsh-whalebuddy/`
 
 ## 结论摘要
 
