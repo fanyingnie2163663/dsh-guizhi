@@ -174,10 +174,10 @@ test('restore：meta.json 合法 JSON 但形状错误 → 抛可读错误，不�
   ]
   for (const meta of broken) {
     await writeFile(metaFile, JSON.stringify(meta))
-    await assert.rejects(store.restore(snap.id), /元数据已损坏|快照/, JSON.stringify(meta))
+    await assert.rejects(store.restore(snap.id), /元数据已损坏/, JSON.stringify(meta))
   }
   await writeFile(metaFile, 'null')
-  await assert.rejects(store.restore(snap.id), /元数据已损坏|快照/)
+  await assert.rejects(store.restore(snap.id), /元数据已损坏/)
   assert.deepEqual(await store.read('map'), { value: { version: 2 }, error: null })
   assert.deepEqual(await tempLeftovers(home), [])
 })
