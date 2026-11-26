@@ -1,5 +1,5 @@
 /**
- * Guizhi · browser half: the three-screen panel (清爽 / 场景 / 地图).
+ * Guizhi · browser half: the three-screen panel (整理 / 场景 / 工作流).
  *
  * Loaded as a plain script through window.__ModuleLoader__.load; the factory
  * receives require and returns a cordis descriptor ({ name, inject, apply }).
@@ -22,10 +22,10 @@
  *   row is selected.
  *
  * Three screens, all fed by GET api/guizhi/state polled every 3 seconds:
- * 1. 清爽：totals cards (插件/工具/技能/近30天未用) + the tool table (name,
+ * 1. 整理：totals cards (插件/工具/技能/近30天未用) + the tool table (name,
  *    owners, 30-day usage; used30d === null renders 未知, NEVER 0) + rescan.
  * 2. 场景：six built-in chips + one-sentence custom text + save (POST scenarios).
- * 3. 地图：stage cards with capability dots (have green / missing yellow /
+ * 3. 工作流：stage cards with capability dots (have green / missing yellow /
  *    redundant gray), click a capability to expand its evidence; bottom buttons
  *    call 查缺补漏/生成工具包/预览/应用/回滚 and 派单草稿, results shown in place.
  *
@@ -39,7 +39,7 @@
  * 是静态视觉预览（假数据、非真实面板），不能当作真机验证。手动验证步骤：
  *   1) 按 docs/host-notes.md §8 建 guizhi-test profile 并安装本仓库；
  *   2) 打开侧栏「归置」，确认三屏可切换；
- *   3) 点「重新扫描」，清爽页数字应变化；用量未知时用量列显示「未知」；
+ *   3) 点「重新扫描」，整理页数字应变化；用量未知时用量列显示「未知」；
  *   4) 浏览器 Network 面板确认 api/guizhi/state 每 3 秒返回 200。
  *
  * Failure policy: a shell without the slots seats logs a warning and leaves the
@@ -91,9 +91,9 @@
   ]
 
   var TABS = [
-    { id: 'clean', title: '清爽' },
+    { id: 'clean', title: '整理' },
     { id: 'scenarios', title: '场景' },
-    { id: 'map', title: '地图' },
+    { id: 'map', title: '工作流' },
   ]
 
   /** One inline icon per scenario chip (stroke SVGs, no external assets). */
@@ -772,7 +772,7 @@
         var map = data !== null && typeof data === 'object' && data.map !== null && typeof data.map === 'object' ? data.map : null
         var stages = map !== null && Array.isArray(map.stages) ? map.stages : []
         if (stages.length === 0) {
-          setAction({ busy: '', message: '', error: '还没有地图阶段：先保存地图（或让会话里的 agent 调 stow_map_save）', warnings: [] })
+          setAction({ busy: '', message: '', error: '还没有工作流阶段：先保存工作流（或让会话里的 agent 调 stow_map_save）', warnings: [] })
           return
         }
         var stageIds = []
@@ -938,6 +938,52 @@
           h('summary', {}, icon('alert', 12), h('span', {}, (label || '警告') + ' ' + String(warnings.length) + ' 条')),
           renderWarnings(warnings),
         )
+      }
+      /**
+       * Scan warnings are mostly engine internals (attribution file caps, a long
+       * unowned-tool list). Show a plain-language summary first and keep the raw
+       * lines behind 技术详情 so a user is never asked to read them.
+       */
+      function renderScanWarnings(warnings) {
+        if (!Array.isArray(warnings) || warnings.length === 0) return null
+        var limitCount = 0
+        var missingCount = 0
+        var usageCount = 0
+        var otherCount = 0
+        for (var index = 0; index < warnings.length; index += 1) {
+          var message = String(warnings[index])
+          if (message.indexOf('源码扫描超过上限') >= 0) limitCount += 1
+          else if (message.indexOf('无法归因到插件') >= 0) missingCount += 1
+          else if (message.indexOf('用量') >= 0) usageCount += 1
+          else otherCount += 1
+        }
+        var summaries = []
+        if (limitCount > 0) summaries.push('部分插件的工具归属信息不完整（扫描量到上限），不影响插件/工具/技能统计。')
+        if (missingCount > 0) summaries.push('有部分工具暂时识别不出来源（多为内置或动态注册工具），不影响统计。')
+        if (usageCount > 0) summaries.push('用量统计不完整：未知用量显示为「未知」，不会当成 0。')
+        if (otherCount > 0) summaries.push('扫描过程中还有 ' + String(otherCount) + ' 条其它提示（详见技术详情）。')
+        return h('div', { className: 'gz-banner gz-banner-warn', role: 'status' },
+          h('div', { className: 'gz-banner-body' },
+            h('strong', {}, '扫描提示（不影响使用）'),
+            h('ul', { className: 'gz-warn-list' }, summaries.map(function (text, summaryIndex) {
+              return h('li', { key: 'scan-summary-' + summaryIndex }, text)
+            })),
+            h('details', { className: 'gz-details' },
+              h('summary', {}, '技术详情（' + String(warnings.length) + ' 条，供排障）'),
+              renderWarnings(warnings),
+            ),
+          ),
+        )
+      }
+
+      /** Local YYYY-MM-DD HH:MM for one ISO timestamp; '' when unusable. */
+      function formatTimestamp(value) {
+        if (typeof value !== 'string' || value === '') return ''
+        var time = Date.parse(value)
+        if (Number.isNaN(time)) return ''
+        var date = new Date(time)
+        function pad(number) { return number < 10 ? '0' + String(number) : String(number) }
+        return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes())
       }
 
       /** State-level read warnings (e.g. a corrupt scan.json) are never hidden. */
@@ -1120,7 +1166,7 @@
           h('div', { className: 'gz-section' },
             h('div', { className: 'gz-section-head' },
               h('h2', { className: 'gz-section-title' }, '本机家底'),
-              h('span', { className: 'gz-meta' }, '扫描时间：' + (typeof scan.generatedAt === 'string' ? scan.generatedAt : '未知')),
+              h('span', { className: 'gz-meta' }, '扫描时间：' + (formatTimestamp(scan.generatedAt) || '未知')),
             ),
             h('div', { className: 'gz-cards' }, cards.map(function (card) {
               var value = card.value === null || card.value === undefined ? '未知' : String(card.value)
@@ -1138,7 +1184,7 @@
                   h('span', {}, '用量统计不可用：工具表用量列显示「未知」，绝不显示 0。'),
                 )
               : null,
-            renderWarningDetails(scanWarnings, '扫描提示'),
+            renderScanWarnings(scanWarnings),
             toolRows.length === 0
               ? h('div', { className: 'gz-empty' },
                   h('span', { className: 'gz-empty-icon' }, icon('box', 20)),
@@ -1346,7 +1392,7 @@
           var startedText = typeof dispatchPayload.startedAt === 'string' ? dispatchClock(dispatchPayload.startedAt) : ''
           return resultCard('info', '已提交后台派单', [
             h('p', { className: 'gz-result-meta' }, '后台会话：' + String(dispatchPayload.sessionId || '') + (startedText === '' ? '' : '；开始于 ' + startedText)),
-            h('p', { className: 'gz-hint' }, 'agent 会在后台会话里拆解并调用 stow_map_save；面板每 3 秒轮询，完成后地图会自动出现。'),
+            h('p', { className: 'gz-hint' }, 'agent 会在后台会话里拆解并调用 stow_map_save；面板每 3 秒轮询，完成后工作流会自动出现。'),
           ])
         }
         return null
@@ -1354,7 +1400,7 @@
 
       function renderMapActions() {
         var busy = action.busy !== ''
-        return h('div', { className: 'gz-actionbar', role: 'group', 'aria-label': '地图操作' },
+        return h('div', { className: 'gz-actionbar', role: 'group', 'aria-label': '工作流操作' },
           h('div', { className: 'gz-actionbar-main' },
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onGaps }, '查缺补漏'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPack }, '生成工具包'),
@@ -1401,7 +1447,7 @@
           else if (dispatch !== null && (dispatch.state === 'failed' || dispatch.state === 'timeout' || dispatch.state === 'lost')) dispatchHint = '上次没有成功，可以重试。'
           body = h('div', { className: 'gz-empty' },
             h('span', { className: 'gz-empty-icon' }, icon('box', 20)),
-            h('p', {}, h('strong', {}, '还没有工作流地图。')),
+            h('p', {}, h('strong', {}, '还没有工作流。')),
             h('p', {}, '点下面按钮让后台 agent 拆解并保存；不需要你新开会话，也不会打断当前对话。'),
             h('div', { className: 'gz-actions' },
               h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: dispatchDisabled, onClick: onDispatch }, dispatchRunning ? '后台执行中…' : (dispatch === null ? '让 Agent 后台拆解' : '重新让 Agent 后台拆解')),
@@ -1467,7 +1513,7 @@
         return h('section', panelProps('map'),
           h('div', { className: 'gz-section' },
             h('div', { className: 'gz-section-head' },
-              h('h2', { className: 'gz-section-title' }, '工作流地图'),
+              h('h2', { className: 'gz-section-title' }, '工作流'),
               h('span', { className: 'gz-meta' }, String(stages.length) + ' 个阶段'),
             ),
             h('p', { className: 'gz-map-meta' }, meta),

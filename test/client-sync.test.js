@@ -86,3 +86,16 @@ test('client.js（后台派单）：自定义场景可派单，openSession 只�
   assert.ok(source.slice(openAt).includes('openSession'), '点击处理里应调用 openSession')
 })
 
+test('client.js（UX）：三屏标签为 整理/场景/工作流，扫描技术告警折叠为用户可读摘要', async () => {
+  const source = await readClientSource()
+  assert.ok(source.includes("{ id: 'clean', title: '整理' }"))
+  assert.ok(source.includes("{ id: 'scenarios', title: '场景' }"))
+  assert.ok(source.includes("{ id: 'map', title: '工作流' }"))
+  assert.ok(source.includes('renderScanWarnings'))
+  assert.ok(source.includes('技术详情（'))
+  assert.ok(source.includes('不影响使用'))
+  assert.ok(source.includes('不会当成 0'))
+  assert.equal(source.includes("'地图操作'"), false)
+})
+
+

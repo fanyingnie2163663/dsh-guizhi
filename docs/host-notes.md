@@ -151,7 +151,7 @@
   - **如何确认插件已加载**：① 设置（Settings）左侧出现「插件」分区（`dsh-client-ui-settings-plugins` 注册 `settings.section` id=`plugins`、order=15）；② 插件/bundle 列表出现 `@fanyingnie/dsh-guizhi` 且启用；③ 左侧栏出现「归置」行；④ 启动日志若报告被跳过的 bundle（`reportSkippedBundles`，`dsh/lib/profile-boot-QhDEDXsF.js:217-225`）说明该 bundle 未挂载。
 
   **第 4 步：面板与工具**
-  - 点开侧栏「归置」：按 [docs/DEMO.md](DEMO.md) §4.2 的三屏验证步骤检查（清爽 / 场景 / 地图 三屏可切换、扫描后数字变化、用量未知显示「未知」、地图页能力点可展开证据、生成工具包结果区为提案语义）；不再只验证「标题 + 版本」的最小面。
+  - 点开侧栏「归置」：按 [docs/DEMO.md](DEMO.md) §4.2 的三屏验证步骤检查（整理 / 场景 / 工作流 三屏可切换、扫描后数字变化、用量未知显示「未知」、工作流页能力点可展开证据、生成工具包结果区为提案语义）；不再只验证「标题 + 版本」的最小面。
   - 会话里调用 `stow_probe`，返回 `{tools, plugins, skills, sessionEvents, profilePath, dshVersion, warnings}`；记录实际 `tools/plugins/skills` 数量与 `dshVersion`（若为 `unknown`，把运行时可探测到的信息补进本文件「其他关键事实」）。
 
 - 未验证项（not-run，不是 pass）：面板真机渲染、`stow_probe` 在 agent 工具面中的注册与调用、`sessionEvents` 对真实会话日志的读取与性能、Task 7 的 `/api/guizhi` 路由真机可达性。
