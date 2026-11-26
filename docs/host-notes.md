@@ -166,6 +166,14 @@
 - 回归：test/packaging.test.js 断言该 peer 声明、各入口文件存在、client.js 的 loader 注册 id 与包名一致。
 - 复核证据（隔离启动，同日）：修复前 guizhi 行 failed to import；修复后 guizhi 行 fiber state=2（ACTIVE），日志 0 条 warn/error。同批对照：dsh-ops、dsh-client-ui-weave ACTIVE；dsh-plugin-guide、dsh-context、brooks-lint 仅 pending 等待其必需服务。隔离 web profile 真机复核（同日晚）：侧栏出现「归置」行，点开后三屏正常渲染（清爽 / 场景 / 地图、「重新扫描」按钮，空状态提示正常），GET /api/guizhi/state 返回 200；desktop profile 重启后的 stow_* 工具面验证仍需补做（本次修复未重启用户实例）。
 
+### 8.2 后台派单（2026-11-26）
+
+- **宿主契约（rc.5，已核对）**：`dsh-api-session-controller/lib/index.js` 以 `super(ctx, "sessionController", { namespace: "session" })` 注册服务；`create(request)` 接受 `{ sessionId?, workspaceId?, cwd?, agentPreset? }` 并以 `agents.createSession` 创建/复用会话；`prompt(request, signal)` 接受 `{ sessionId, requestId, content:[{type:'text',text}], mode:'queue'|'steer' }`（requestId 是幂等回执键，source 记入 user/message）。`sessionQuery.readSession(id)` 返回完整 `events`；完成标记为 `turn/end`（事件词表见 dsh-session/lib/index.js 的 KNOWN_SESSION_EVENT_TYPES）。
+- **实现**：`lib/dispatch.js` 纯函数（prompt 构造 + 状态归约）；HostAdapter 新增 `dispatchSupport / createDispatchSession / promptDispatchSession / readDispatchEvents`（服务缺失只 warn/降级）；`POST /api/guizhi/dispatch` 与 `GET state.dispatch`；client 地图页按钮 + 状态行 + 可选「查看后台会话」。
+- **隔离 web profile 真机（同日）**：临时 DSH_HOME + bundles `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app`、`@fanyingnie/dsh-guizhi`，启动 `dsh --profile verify --no-open`。实测：GET state → 200 且 `dispatchSupported:true, dispatch:null`；POST scan → 200（plugins 1 / tools 15 / skills 5）；POST scenarios(selected:[dev]) → 200；POST dispatch {kind:map} → 200，`{state:running, sessionId:session-e4dbfd76-…}`，`<home>/guizhi/dispatch.json` 落盘（含 requestId）；约 6s 后 GET state → `dispatch.state:done`，finishedAt 距 startedAt 约 104ms。
+- **未验证（not-run）**：隔离环境没有模型凭据，agent 回合在 104ms 内结束，没有真实 LLM 拆解与 `stow_map_save` 写入；desktop profile 重启后的真实后台拆解、地图自动出现与失败重试需用户按 DEMO §4.2-9 实测。
+- **schema 变化**：GET state 新增 `dispatch`（无记录为 null）与 `dispatchSupported`（宿主是否具备 sessionController + sessionQuery）；`lib/store.js` 允许文档新增 `dispatch`。
+
 ## 9. 相对任务书的决策记录（与裁决一致的偏离）
 
 - D1：不创建根 `index.js`（`package.json` main/exports 指向 `./lib/index.js`）。

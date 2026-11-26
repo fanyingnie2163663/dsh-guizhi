@@ -143,11 +143,12 @@
 1. **安装插件（用户执行）**：把 @fanyingnie/dsh-guizhi 装进 desktop profile（pnpm add file: 或复制到 profile/node_modules），并在 profile 的 cordis.patch.yml 增加一行（id: guizhi / name: @fanyingnie/dsh-guizhi）。注意：本任务未执行，也不建议直接改生产 profile；建议新开一个测试 profile。
 2. **重启 DSH（用户执行）**：重启后侧栏出现「归置」面板行，主区「清爽 / 场景 / 地图」三屏可切换；slots 缺失只 console.warn，不应有 console.error。
 3. **工具面（用户执行）**：新会话应出现 9 个工具 stow_scan / stow_status / stow_map_save / stow_pack_build / stow_gaps / stow_preview / stow_apply / stow_rollback / stow_draft；逐个调用一次，业务失败应返回 {ok:false,...} 文本而不是崩溃。真机注册尚未验证（Task 7 只做了宿主 defineTool 编译冒烟 9/9 allOk，不是运行注册）。
-4. **路由（用户执行，只读）**：GET http://127.0.0.1:<宿主端口>/api/guizhi/state 应返回 {scan,map,proposals,selections,warnings}；非 loopback 请求应被围栏拒绝。
+4. **路由（用户执行，只读）**：GET http://127.0.0.1:<宿主端口>/api/guizhi/state 应返回 {scan,map,proposals,selections,dispatch,dispatchSupported,warnings}；非 loopback 请求应被围栏拒绝。
 5. **≥20 插件真机扫描（用户执行）**：在宿主内点「重新扫描」或调用 stow_scan，记录：插件数 / 工具数 / 技能数 / 归因数 / 每步耗时；第一次扫描应 ≤10s（本任务只读近似 240ms，但真机含会话日志用量统计会更慢），第二次是否更快（当前实现没有扫描缓存 → 预期相近，记 issue）。
 6. **60 秒录屏与用户测试（用户执行）**：按 §1 录制；找 3 位已有自己 DSH 配置的用户看，记录是否有人问「怎么装的」。
 7. **v1.1 安装与生效方式（未来任务）**：显式勾选安装插件行（写 profile 前预览 + 快照 + 回滚 + 「需要新会话 / 重启」提示）；能力点生效方式与「需单开会话」徽章（§11 #4/#5）。
 8. **「生成工具包 → 预览 → 应用 → 回滚」真机闭环（用户执行）**：点「生成工具包」后确认 `<数据根>/packs/` 仍为空、proposals 里出现 kind=pack 提案、`<数据根>/packs.json` 里存入生成时的 pack；「预览变更」能看到该提案；「应用」后 `packs/<id>.json` 出现、`snapshots/<snapshotId>/packs-created.json` 有台账（`entries: [{path, existedBefore}]`）；「回滚」后本次新建的包文件消失、若该包此前已存在则恢复覆盖前内容、四份状态恢复，再点一次回滚不报错。
+9. **后台派单真机（用户执行）**：地图页空状态点「让 Agent 后台拆解」（需先在「场景」页选择并保存场景）。预期：结果区显示「已提交后台派单」与后台会话 id；状态行显示「后台执行中…（开始于 HH:MM）」；数据根 `<数据根>/dispatch.json` 出现 `state:running` 记录；GET `/api/guizhi/state` 的 `dispatch.state` 为 running；agent 在后台会话里调用 `stow_map_save` 后，地图页 3 秒轮询自动出现阶段（不需要刷新或切会话）；失败/超时/会话丢失显示原因并可重试；「查看后台会话」只在点击时打开，不自动切主界面。若宿主缺少 `sessionController`，按钮禁用并提示、POST 返回 503。
 
 ---
 
