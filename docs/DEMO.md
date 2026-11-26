@@ -16,11 +16,11 @@
 
 1. 真机安装（**需用户手动**，见 §4.1）：插件进 profile，重启 DSH，侧栏出现「归置」行。
 2. 数据根：见 §5.2 的解析链；下文用 `<数据根>` 指代实际落点。
-3. **目录源：演示「查缺补漏」必配**。写 `<数据根>/sources.json`，指向一个可访问的 format-1 目录索引；索引形如 `{ "format": 1, "plugins": [ { "name", "title", "description", "version"? } ] }`（与 lib/catalog.js 的 parseFormat1 及 [test/fixtures/index.json](../test/fixtures/index.json) 一致；根对象必须带 `plugins` 数组，不是 `entries`）：
+3. **目录源：演示「查缺补漏」必配**。写 `<数据根>/sources.json`，指向一个可访问的 format-1 目录索引；索引形如 `{ "format": 1, "plugins": [ { "name", "title", "description", "version"? } ] }`（与 lib/catalog.js 的 parseFormat1 及 [test/fixtures/index.json](../test/fixtures/index.json) 一致；根对象必须带 `plugins` 数组，不是 `entries`；`title` / `description` 可为字符串或 `{ en, zh }` 语言文案对象）：
 ~~~json
 { "catalog": { "url": "https://example.com/format-1-index.json" } }
 ~~~
-   **格式核对状态（诚实说明）**：真实公共目录源的线上格式本任务**未联网核对（not-run）**，演示前请先确认目标源返回的就是上面这个 `{format:1, plugins:[...]}` 形状；判断方法：查缺补漏结果会带 `error` 说明解析失败，不会静默当成「没有缺口」。
+   **格式核对状态（2026-11-27 更新）**：已联网核对三个真实源——`https://dshopen.org/index.json`、`https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`、`https://awesome-dsh-plugin.com/index.json`：根均为 `{format:1, plugins:[...]}`，`title` / `description` 有 `{en,zh}` 本地化对象（parseFormat1 已支持）；`https://dshmarket.com/index.json` 本次核验超时，未确认。演示前仍建议先点一次「查缺补漏」；解析失败会带明确 `error`（fail-open），不会静默当成「没有缺口」。
    **无源/源不可达分支（必须知道怎么讲）**：不会假装「你没有缺口」——查缺补漏返回 `items: []` + 明确 `error`（fail-open）。此时把第 4 镜改成「目录不可达」演示；后续「生成工具包 → 预览 → 应用 → 回滚」**不依赖目录源**，仍可完整演示（pack 提案来自地图，不是目录）。
 4. **地图：演示「能力点展开证据」必配**。v1 面板只读已保存地图：演示前在会话里让 agent 调 `stow_map_save`（参数见 §5.3），或把下面这份合法 `map.json` 放进数据根。`evidence` 里要有 `source/tools/used30d/lastUsedAt`，点能力点才有证据可讲：
 ~~~json
@@ -225,4 +225,4 @@ node --check lib/apply.js && node --check lib/routes.js && node --check lib/host
 6. **真机未验证项**：安装、重启、面板三屏、9 工具注册、路由挂载、≥20 插件宿主内扫描、「生成工具包→预览→应用→回滚」真机闭环、录屏、用户测试（见 §4）。
 7. **（已修复，最终修复波 F7）** 面板「生成工具包」结果文案：标题改为「已生成能力包提案（等待预览/应用）」，删除空的「路径：」行，提示「应用成功后写入 packs/<id>.json」；并有静态同步测试锁住 client 文案/版本/场景表。
 8. **「查缺补漏」会覆盖已有 pack 提案**：gaps 按 D7 语义整体重写 proposals，之前 /pack 生成的 pack 提案会消失（packs 状态里的包仍在，重新点「生成工具包」即可按同 id 补回提案）。演示时先讲缺口、再生成工具包。
-9. **真实公共目录源格式未联网核对（not-run）**：§1.1 的 format-1 形状已按 lib/catalog.js 的 parseFormat1 与 test/fixtures/index.json 校正为 `{format:1, plugins:[...]}`；真实源需演示前确认，解析失败会 fail-open 返回明确 error，不会假装没有缺口。
+9. **真实公共目录源格式已核验三个源（2026-11-27）**：dshopen / jsDelivr / awesome 源站均为 `{format:1, plugins:[...]}`，`title` / `description` 为 `{en,zh}` 本地化对象（parseFormat1 已支持，见 test/catalog.test.js 本地化用例）；`dshmarket.com/index.json` 本次超时未确认。解析失败仍 fail-open 返回明确 error，不会假装没有缺口。
