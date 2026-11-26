@@ -86,6 +86,8 @@
 
 要求：DSH Desktop `≥ 0.2.2`（开发基线 `0.2.2-rc.5`）、Node `≥ 24.9`。
 
+npm：<https://www.npmjs.com/package/@fanyingnie/dsh-guizhi>（当前 `0.1.0`，仍属 0.x 早期版本，接口与界面可能变化）。
+
 <details>
 <summary><b>方式一：GUI（推荐）</b></summary>
 
