@@ -20,12 +20,15 @@ async function makeHome() {
   return home
 }
 
-/** 一个 D7 map stage 的最小形状；tools/skills 是 buildPack 的合并来源。 */
+/**
+ * 一个合法 D7 map stage（R-4A：封闭的 stage 形状新增可选 tools/skills）。
+ * overrides 用来挂合并来源或非法值；fixture 由 schemas.map.validate 把关。
+ */
 function stage(overrides = {}) {
   return { id: 'understand', title: '理解需求', capabilities: [], ...overrides }
 }
 
-/** 两阶段地图：工具/技能有重名，用来验证去重与首现顺序。 */
+/** 两阶段合法 D7 map：工具/技能有重名，用来验证去重与首现顺序。 */
 function makeMap() {
   return {
     scenarios: ['dev'],
@@ -52,6 +55,70 @@ async function tempLeftovers(dir) {
   }
   return names.filter((name) => name.endsWith('.tmp'))
 }
+
+test('buildPack fixture：合法的 D7 map 通过 schemas.map.validate', () => {
+  assert.deepEqual(schemas.map.validate(makeMap()), { ok: true, errors: [] })
+})
+
+test('buildPack：合法 D7 map（带 capabilities/evidence 与 tools/skills）能构建包', () => {
+  const map = {
+    scenarios: ['dev'],
+    stages: [
+      {
+        id: 'understand',
+        title: '理解需求',
+        capabilities: [
+          { id: 'read-code', title: '读代码', status: 'have', evidence: { source: 'scan', tools: ['read'] } },
+          { id: 'search-web', title: '查资料', status: 'missing', evidence: { source: 'catalog' } },
+        ],
+        tools: ['read'],
+        skills: ['brainstorming'],
+      },
+      {
+        id: 'deliver',
+        title: '交付',
+        capabilities: [],
+        tools: ['read', 'edit'],
+        skills: ['writing'],
+      },
+    ],
+  }
+  assert.deepEqual(schemas.map.validate(map), { ok: true, errors: [] })
+  const pack = buildPack({ map, stageIds: ['understand', 'deliver'], title: '研发助手包' })
+  assert.deepEqual(pack.tools, ['read', 'edit'])
+  assert.deepEqual(pack.skills, ['brainstorming', 'writing'])
+  assert.deepEqual(validatePack(pack), { ok: true, errors: [] })
+})
+
+test('buildPack：非法 map 被拒绝，errors 带 schema 原始错误（不再接受未校验 stage 形状）', () => {
+  const unknownField = makeMap()
+  unknownField.stages[0].order = 1
+  assert.throws(
+    () => buildPack({ map: unknownField, stageIds: ['understand'], title: 't' }),
+    (error) => {
+      assert.equal(error.name, 'PackBuildError')
+      assert.match(error.message, /地图校验失败/)
+      assert.deepEqual(error.errors, schemas.map.validate(unknownField).errors)
+      assert.ok(error.errors.some((message) => message.includes('未知字段')))
+      return true
+    },
+  )
+
+  const duplicateId = makeMap()
+  duplicateId.stages[1].id = duplicateId.stages[0].id
+  assert.throws(
+    () => buildPack({ map: duplicateId, stageIds: ['understand'], title: 't' }),
+    (error) => {
+      assert.equal(error.name, 'PackBuildError')
+      assert.ok(error.errors.some((message) => message.includes('重复')), JSON.stringify(error.errors))
+      return true
+    },
+  )
+
+  const badTools = makeMap()
+  badTools.stages[0].tools = ['read', 7]
+  assert.throws(() => buildPack({ map: badTools, stageIds: ['understand'], title: 't' }), /地图校验失败/)
+})
 
 test('buildPack：按 stageIds 顺序合并两阶段的 tools/skills，去重且保持首次出现顺序', () => {
   const pack = buildPack({ map: makeMap(), stageIds: ['understand', 'deliver'], title: '研发助手包' })
@@ -216,7 +283,7 @@ test('exportPack：home 非法时拒绝', async () => {
 test('exportPack：超过单文件 1MB 上限的包被拒绝，不留残文件', async () => {
   const home = await makeHome()
   const tools = Array.from({ length: 40000 }, (_, index) => 'tool-' + index + '-' + 'x'.repeat(20))
-  const pack = buildPack({ map: { stages: [stage({ id: 'big', tools })] }, stageIds: ['big'], title: 't' })
+  const pack = buildPack({ map: { scenarios: [], stages: [stage({ id: 'big', tools })] }, stageIds: ['big'], title: 't' })
   assert.equal(validatePack(pack).ok, true, '夹具包本身必须合法')
   await assert.rejects(exportPack({ home, pack }), /1MB|上限/)
   const entries = await readdir(join(home, 'packs')).catch(() => [])

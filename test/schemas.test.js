@@ -213,6 +213,45 @@ test('map：重复 stage id 被判错', () => {
   assert.ok(errors.some((message) => message.includes('重复') && message.includes('understand')), JSON.stringify(errors))
 })
 
+test('map：stage 支持可选 tools/skills（R-4A 扩展），缺省仍合法', () => {
+  const withBoth = validMap()
+  withBoth.stages[0].tools = ['read', 'grep']
+  withBoth.stages[0].skills = ['brainstorming']
+  assert.deepEqual(schemas.map.validate(withBoth), { ok: true, errors: [] })
+
+  const withEmpty = validMap()
+  withEmpty.stages[0].tools = []
+  withEmpty.stages[1].skills = []
+  assert.deepEqual(schemas.map.validate(withEmpty), { ok: true, errors: [] })
+
+  // 两个字段都可缺省（既有 D7 map 一字不改仍然合法）
+  assert.deepEqual(schemas.map.validate(validMap()), { ok: true, errors: [] })
+})
+
+test('map：stage 的 tools/skills 元素必须是 string，非数组/非法元素被拒', () => {
+  const badElement = validMap()
+  badElement.stages[0].tools = ['read', 7]
+  const elementErrors = failing(schemas.map.validate(badElement))
+  assert.ok(elementErrors.some((message) => message.includes('tools[1]')), JSON.stringify(elementErrors))
+
+  const badSkills = validMap()
+  badSkills.stages[1].skills = [null]
+  assert.ok(failing(schemas.map.validate(badSkills)).some((message) => message.includes('skills[0]')))
+
+  const notArray = validMap()
+  notArray.stages[0].tools = 'read'
+  assert.ok(failing(schemas.map.validate(notArray)).some((message) => message.includes('tools')))
+
+  // 仍是封闭对象：新增两个键之外，未知 stage 字段继续被拒
+  const stillClosed = validMap()
+  stillClosed.stages[0].order = 1
+  assert.ok(
+    failing(schemas.map.validate(stillClosed)).some(
+      (message) => message.includes('未知字段') && message.includes('order'),
+    ),
+  )
+})
+
 test('pack：合法能力包通过；version 必须为 1；requirements 固定值', () => {
   assert.deepEqual(schemas.pack.validate(validPack()), { ok: true, errors: [] })
 
