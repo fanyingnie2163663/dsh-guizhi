@@ -31,7 +31,9 @@
 
 ## 三屏面板
 
-![归置三屏总览](docs/assets/ui-overview.png)
+![左侧栏入口与三屏总览](docs/assets/ui-overview.png)
+
+**入口**：DSH 左侧栏面板列表里的「归置」行（排在「定时」之后、「技能中心」之前，`PANEL_ORDER 20`；hover 由 shell 显示「归置」tooltip）——产品记忆点落在左栏；点击后三屏内容在中央区展开。
 
 | 清爽 | 场景 | 地图 |
 |:---:|:---:|:---:|
