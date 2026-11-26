@@ -164,7 +164,7 @@
 - 根因：本插件以 link:F:/归置 安装，属于 linked root。宿主的运行时包路由（dsh-app-boot/lib/index.js 的 ResolutionRouter.routeLinked + readPeerNames）只对「某个祖先 package.json 的 peerDependencies 里声明过」的包名做安装域拦截；此前本包只有 engines.dsh 与 dependencies.yaml，未声明 @deepseek-ai/dsh-tools，于是落回 Node 原生解析并失败。engines.dsh 能满足兼容性检查，但决定不了模块解析。
 - 修复：package.json 增加 peerDependencies: { "@deepseek-ai/dsh-tools": ">=0.2.2-rc.2 <0.3.0" }（兼容性仍由 engines.dsh 单独裁决）。
 - 回归：test/packaging.test.js 断言该 peer 声明、各入口文件存在、client.js 的 loader 注册 id 与包名一致。
-- 复核证据（隔离启动，同日）：修复前 guizhi 行 failed to import；修复后 guizhi 行 fiber state=2（ACTIVE），日志 0 条 warn/error。同批对照：dsh-ops、dsh-client-ui-weave ACTIVE；dsh-plugin-guide、dsh-context、brooks-lint 仅 pending 等待其必需服务。真实 Desktop 重启后的面板/工具验证仍需按 §8 手动步骤补做（修复未重启用户实例）。
+- 复核证据（隔离启动，同日）：修复前 guizhi 行 failed to import；修复后 guizhi 行 fiber state=2（ACTIVE），日志 0 条 warn/error。同批对照：dsh-ops、dsh-client-ui-weave ACTIVE；dsh-plugin-guide、dsh-context、brooks-lint 仅 pending 等待其必需服务。隔离 web profile 真机复核（同日晚）：侧栏出现「归置」行，点开后三屏正常渲染（清爽 / 场景 / 地图、「重新扫描」按钮，空状态提示正常），GET /api/guizhi/state 返回 200；desktop profile 重启后的 stow_* 工具面验证仍需补做（本次修复未重启用户实例）。
 
 ## 9. 相对任务书的决策记录（与裁决一致的偏离）
 
