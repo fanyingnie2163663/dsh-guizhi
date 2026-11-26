@@ -7,7 +7,7 @@
 <p align="center"><b>看清你装了什么，按你的工作流归置成能用的工具包。</b></p>
 
 <p align="center">
-  <a href="https://github.com/fanyingnie/dsh-guizhi/actions"><img src="https://img.shields.io/badge/tests-280%20passing-2ea44f" alt="tests"></a>
+  <a href="https://github.com/fanyingnie2163663/dsh-guizhi/actions"><img src="https://img.shields.io/badge/tests-280%20passing-2ea44f" alt="tests"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A524.9-339933" alt="node">
   <img src="https://img.shields.io/badge/DSH-%E2%89%A50.2.2-4d6bfe" alt="dsh">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
@@ -98,7 +98,7 @@
 ```bash
 dsh plugin --profile <profile> add /path/to/dsh-guizhi
 # 或发布后：
-dsh plugin --profile <profile> add @fanyingnie/dsh-guizhi
+dsh plugin --profile <profile> add @fanyingnie2163663/dsh-guizhi
 ```
 
 > 插件改动只对**下一个会话 / 重启后**生效。
