@@ -14,7 +14,8 @@ import { buildPack } from '../lib/packs.js'
 import { schemas } from '../lib/schemas.js'
 
 /**
- * Task 8 end-to-end acceptance (design §11 #2/#3, D7 + R-4A + R-6A + R-7A).
+ * Task 8 end-to-end acceptance (design §11 #2/#3, D7 + R-4A + R-6A + R-7A +
+ * R-PACK).
  *
  * Unlike the per-module suites this file mocks no business module: it runs the
  * real scan/usage/scenarios/map/catalog/packs/apply/store modules over a real
@@ -23,8 +24,11 @@ import { schemas } from '../lib/schemas.js'
  * (no DSH boot in a test) and the public catalog document (no network).
  *
  * Chain: scan → save scenarios → save map → gaps (incl. the 400 NO_MAP guard)
- *        → pack export → preview → apply (snapshot + ledger + pack file)
- *        → rollback (idempotent, scoped to the apply ledger) → final state.
+ *        → pack proposal (R-PACK: /pack only upserts a kind='pack' proposal and
+ *          writes no packs file) → preview → apply (snapshot + ledger + pack
+ *          file export) → rollback (idempotent, scoped to the apply ledger)
+ *        → final state. Every proposal in the chain comes from a real route
+ *        call; no fixture is seeded.
  */
 
 /** Fixed clock: every 30-day usage window in this suite is deterministic. */
@@ -309,13 +313,15 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.equal(storedProposals.generatedAt, NOW_ISO)
   assert.deepEqual(schemas.proposals.validate(storedProposals), { ok: true, errors: [] })
 
-  // --- 6) 生成包：真实 buildPack + exportPack 写 packs/<id>.json ---------
+  // --- 6) 生成包提案：真实 /pack 写 proposals、不写 packs/ 文件（R-PACK）---
   const packTitle = '研发交付包'
   const stageIds = ['understand', 'deliver']
   const expectedPack = buildPack({ map, stageIds, title: packTitle })
   const packResponse = await call(ROUTE_PATHS.pack, { stageIds, title: packTitle })
   assert.equal(packResponse.status, 200, JSON.stringify(packResponse.json))
+  assert.deepEqual(Object.keys(packResponse.json).sort(), ['pack', 'proposal'], 'R-PACK：/pack 返回 {pack,proposal}')
   const pack = packResponse.json.pack
+  const packProposal = packResponse.json.proposal
   assert.deepEqual(packWithoutTimestamp(pack), packWithoutTimestamp(expectedPack))
   assert.match(pack.createdAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
   assert.deepEqual(schemas.pack.validate(pack), { ok: true, errors: [] })
@@ -323,41 +329,43 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.deepEqual(pack.skills, ['brainstorming', 'writing-plans'], '跨阶段合并去重保序')
   assert.equal(pack.version, 1)
   assert.deepEqual(pack.requirements, { appliesAt: 'new-session', ownSession: false })
-  assert.equal(packResponse.json.path, join(home, 'packs', pack.id + '.json'))
-  assert.deepEqual(await readJson(packResponse.json.path), pack)
-
-  // --- 7) 预览：同输入 hash 相同、ids 过滤；补一条 pack 提案（apply 用） -
-  const packProposal = {
-    id: 'pack-apply-understand-deliver',
+  assert.deepEqual(packProposal, {
+    id: pack.id,
     kind: 'pack',
-    title: '应用包',
-    effect: '把「理解需求 + 交付」两个阶段合并成一个能力包。',
+    title: packTitle,
+    effect: '导出能力包 研发交付包（3 个工具 / 2 个技能）',
     evidence: { source: 'map', refs: stageIds },
-  }
-  const seeded = { items: [...storedProposals.items, packProposal], generatedAt: storedProposals.generatedAt }
-  await store.write('proposals', seeded)
-  assert.deepEqual(await readJson(stateFile('proposals')), seeded)
+  })
+  await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' }, 'R-PACK：/pack 不得写 packs/ 文件')
+  const storedAfterPack = await readJson(stateFile('proposals'))
+  assert.deepEqual(storedAfterPack.items, [...storedProposals.items, packProposal], '安装提案保留 + pack 提案追加')
+  assert.equal(storedAfterPack.generatedAt, NOW_ISO)
+  assert.deepEqual(schemas.proposals.validate(storedAfterPack), { ok: true, errors: [] })
 
+  // --- 7) 预览：安装提案 + 真实 /pack 生成的 pack 提案都在预览里 ----------
   const previewAll = await call(ROUTE_PATHS.preview, {})
   assert.equal(previewAll.status, 200, JSON.stringify(previewAll.json))
-  assert.deepEqual(previewAll.json.items.map((item) => item.id), [gapItem.id, packProposal.id])
+  assert.deepEqual(previewAll.json.items.map((item) => item.id), [gapItem.id, pack.id])
   assert.match(previewAll.json.hash, /^[0-9a-f]{64}$/)
   const previewAgain = await call(ROUTE_PATHS.preview, {})
   assert.equal(previewAgain.json.hash, previewAll.json.hash, '同输入 hash 必须稳定')
-  const previewFiltered = await call(ROUTE_PATHS.preview, { ids: [packProposal.id] })
+  const previewFiltered = await call(ROUTE_PATHS.preview, { ids: [pack.id] })
   assert.equal(previewFiltered.status, 200)
-  assert.deepEqual(previewFiltered.json.items.map((item) => item.id), [packProposal.id], 'ids 过滤生效')
+  assert.deepEqual(previewFiltered.json.items.map((item) => item.id), [pack.id], 'ids 过滤生效')
   assert.notEqual(previewFiltered.json.hash, previewAll.json.hash)
   assert.equal(previewAll.json.items[0].title, gapItem.title)
   assert.equal(previewAll.json.items[0].effect, gapItem.effect)
+  assert.equal(previewAll.json.items[1].title, packTitle)
+  assert.match(previewAll.json.items[1].effect, /导出能力包/)
 
-  // Snapshot the pre-apply state for the final "state restored" assertion.
+  // Snapshot the pre-apply state (after /pack) for the final restore assertion.
   const preApply = await call(ROUTE_PATHS.state, {})
   assert.equal(preApply.status, 200)
-  assert.deepEqual(preApply.json.proposals, seeded)
+  assert.deepEqual(preApply.json.proposals, storedAfterPack)
 
-  // --- 8) 应用：快照 → 台账 → 包文件 ------------------------------------
+  // --- 8) 应用：apply 才落盘——快照 → 台账 → 包文件 ----------------------
   const expectedAppliedPack = buildPack({ map, stageIds, title: packProposal.title })
+  assert.equal(expectedAppliedPack.id, pack.id, 'apply 用提案的 title+refs 重建，pack id 必须一致')
   const applyResponse = await call(ROUTE_PATHS.apply, { ids: [packProposal.id, gapItem.id] })
   assert.equal(applyResponse.status, 200, JSON.stringify(applyResponse.json))
   assert.deepEqual(applyResponse.json.applied, [packProposal.id], 'install 提案 v1 不应用')
@@ -377,6 +385,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   const appliedPackPath = join(home, 'packs', expectedAppliedPack.id + '.json')
   const ledger = await readJson(join(home, 'snapshots', snapshotId, 'packs-created.json'))
   assert.deepEqual(ledger.paths, [appliedPackPath], 'R-6A：台账记下本次将创建的全部包路径')
+  assert.deepEqual(await readdir(join(home, 'packs')), [expectedAppliedPack.id + '.json'], 'apply 后 packs/ 里只有本次导出的包（/pack 没写过文件）')
   const appliedPackDoc = await readJson(appliedPackPath)
   assert.equal(appliedPackDoc.id, expectedAppliedPack.id)
   assert.deepEqual(packWithoutTimestamp(appliedPackDoc), packWithoutTimestamp(expectedAppliedPack))
@@ -393,10 +402,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.equal(rollbackResponse.status, 200, JSON.stringify(rollbackResponse.json))
   assert.deepEqual(rollbackResponse.json, { restored: true })
   await assert.rejects(stat(appliedPackPath), { code: 'ENOENT' }, '台账记录的包文件必须被删除')
-  await stat(packResponse.json.path).then(
-    () => {},
-    () => assert.fail('回滚只能删除本次 apply 台账里的包，不得删除 pack 路由导出的其它包'),
-  )
+  assert.deepEqual(await readdir(join(home, 'packs')), [], '回滚后本次导出的包文件不残留')
 
   const restoredState = await call(ROUTE_PATHS.state, {})
   assert.deepEqual(restoredState.json, preApply.json, 'scan/map/proposals/selections 必须恢复到 apply 前')

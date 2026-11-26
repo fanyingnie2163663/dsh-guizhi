@@ -1,6 +1,6 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROUTE_PATHS, TOOL_SPECS, createRoutes, registerTools } from '../lib/routes.js'
@@ -449,37 +449,113 @@ test('POST map：缺少 map 字段返回 400', async () => {
 })
 
 // ---------------------------------------------------------------------------
-// POST pack
+// POST pack (R-PACK): buildPack + proposals upsert, never exports a file
 // ---------------------------------------------------------------------------
 
-test('POST pack：没有地图时返回 400 且不导出文件', async () => {
+/** R-PACK: /pack 只写提案；packs/ 目录必须不存在（apply 才是落盘点）。 */
+async function assertNoPacksExport(home) {
+  await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' }, '/pack 不得写 packs/ 文件')
+}
+
+test('POST pack：没有地图时返回 400 NO_MAP，不写提案也不导出文件', async () => {
   const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
   cleanup.push(home)
-  const response = await call(makeDeps({ home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  const store = createFakeStore()
+  const response = await call(makeDeps({ store, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
   assertFailure(response, 400, /地图/)
+  assert.equal(response.json.code, 'NO_MAP')
+  assert.deepEqual(store.writes, [], '无地图不得写 proposals')
+  await assertNoPacksExport(home)
 })
 
-test('POST pack：stageIds 引用未知阶段返回 400', async () => {
+test('POST pack：stageIds 引用未知阶段返回 400，不写提案也不导出文件', async () => {
   const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
   cleanup.push(home)
   const store = createFakeStore({ map: sampleMap() })
   const response = await call(makeDeps({ store, home }), ROUTE_PATHS.pack, { stageIds: ['nope'], title: '研发包' })
   assertFailure(response, 400, /不存在/)
+  assert.deepEqual(store.writes, [], 'buildPack 失败不得写 proposals')
+  await assertNoPacksExport(home)
 })
 
-test('POST pack：buildPack + exportPack 成功，返回 {pack,path} 且文件真实写出', async () => {
+test('POST pack：生成 kind=pack 提案写入 proposals，不写 packs 文件，返回 {pack,proposal}', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
+  cleanup.push(home)
+  const store = createFakeStore({ map: sampleMap(), proposals: sampleProposals() })
+  const response = await call(makeDeps({ store, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.deepEqual(Object.keys(response.json).sort(), ['pack', 'proposal'], 'R-PACK：/pack 返回 {pack,proposal}，不再返回 path')
+  const { pack, proposal } = response.json
+  assert.deepEqual(schemas.pack.validate(pack), { ok: true, errors: [] })
+  assert.equal(pack.version, 1)
+  assert.deepEqual(pack.stageIds, ['understand'])
+  assert.deepEqual(pack.tools, ['read'])
+  assert.deepEqual(proposal, {
+    id: pack.id,
+    kind: 'pack',
+    title: '研发包',
+    effect: '导出能力包 研发包（1 个工具 / 1 个技能）',
+    evidence: { source: 'map', refs: ['understand'] },
+  })
+  const writes = store.writes.filter((write) => write.name === 'proposals')
+  assert.equal(writes.length, 1, '生成提案必须写一次 proposals')
+  const written = writes[0].value
+  assert.deepEqual(schemas.proposals.validate(written), { ok: true, errors: [] })
+  assert.deepEqual(written.items.map((item) => item.id), ['pack-dev', 'install-web', pack.id], '既有提案保留、新提案追加')
+  assert.deepEqual(written.items[2], proposal)
+  assert.equal(written.generatedAt, NOW_ISO, 'generatedAt 使用注入时钟')
+  await assertNoPacksExport(home)
+})
+
+test('POST pack：同参数重复调用幂等——同 id 提案原地替换、不重复追加', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
+  cleanup.push(home)
+  const store = createFakeStore({ map: sampleMap(), proposals: sampleProposals() })
+  const deps = makeDeps({ store, home })
+  const first = await call(deps, ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  const second = await call(deps, ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assert.equal(first.status, 200)
+  assert.equal(second.status, 200)
+  assert.equal(second.json.pack.id, first.json.pack.id, 'pack id 必须确定性，重复调用命中同一条提案')
+  const writes = store.writes.filter((write) => write.name === 'proposals')
+  assert.equal(writes.length, 2)
+  const finalDoc = writes[1].value
+  assert.deepEqual(finalDoc.items.map((item) => item.id), ['pack-dev', 'install-web', first.json.pack.id], '同 id 原地替换，不追加第二条')
+  assert.deepEqual(second.json.proposal, first.json.proposal)
+  assert.equal(finalDoc.items.filter((item) => item.kind === 'pack' && item.id === first.json.pack.id).length, 1)
+  await assertNoPacksExport(home)
+})
+
+test('POST pack：既有 proposals 文档损坏/不可读时 400 PROPOSALS_INVALID，不覆盖原文档', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
+  cleanup.push(home)
+  const brokenShape = createFakeStore({ map: sampleMap(), proposals: { items: 'nope', generatedAt: NOW_ISO } })
+  const shapeResponse = await call(makeDeps({ store: brokenShape, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assertFailure(shapeResponse, 400, /提案/)
+  assert.equal(shapeResponse.json.code, 'PROPOSALS_INVALID')
+  assert.deepEqual(brokenShape.writes, [], '坏文档不得被覆盖')
+  const unreadable = createFakeStore({ map: sampleMap() })
+  unreadable.errors.proposals = '状态 "proposals" 的 JSON 已损坏：Unexpected token'
+  const readResponse = await call(makeDeps({ store: unreadable, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assertFailure(readResponse, 400, /提案/)
+  assert.equal(readResponse.json.code, 'PROPOSALS_INVALID')
+  assert.deepEqual(unreadable.writes, [])
+  await assertNoPacksExport(home)
+})
+
+test('registerTools：stow_pack_build 与 /pack 路由同行为（写提案、不写 packs 文件）', async () => {
   const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
   cleanup.push(home)
   const store = createFakeStore({ map: sampleMap() })
-  const response = await call(makeDeps({ store, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
-  assert.equal(response.status, 200, JSON.stringify(response.json))
-  assert.deepEqual(schemas.pack.validate(response.json.pack), { ok: true, errors: [] })
-  assert.equal(response.json.pack.version, 1)
-  assert.deepEqual(response.json.pack.stageIds, ['understand'])
-  assert.deepEqual(response.json.pack.tools, ['read'])
-  assert.ok(response.json.path.startsWith(home))
-  const parsed = JSON.parse(await readFile(response.json.path, 'utf8'))
-  assert.deepEqual(parsed, response.json.pack)
+  const tools = registerTools({ deps: makeDeps({ store, home }) })
+  const result = await tools.find((tool) => tool.name === 'stow_pack_build').handler({ stageIds: ['understand'], title: '研发包' })
+  assert.equal(result.pack.id, result.proposal.id)
+  assert.equal(result.proposal.kind, 'pack')
+  assert.deepEqual(result.proposal.evidence, { source: 'map', refs: ['understand'] })
+  const writes = store.writes.filter((write) => write.name === 'proposals')
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].value.items, [result.proposal])
+  await assertNoPacksExport(home)
 })
 
 // ---------------------------------------------------------------------------
