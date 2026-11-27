@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { BUILTIN_SCENARIOS } from '../lib/scenarios.js'
+import { TOOL_SPECS } from '../lib/routes.js'
 
 /**
  * F7 static sync tests. client.js is a plain browser artifact mounted through the
@@ -9,12 +10,47 @@ import { BUILTIN_SCENARIOS } from '../lib/scenarios.js'
  * be imported in Node. These tests read the source text and assert the two
  * duplicated contracts stay in sync: the version constant vs package.json, and
  * the six scenario chips vs lib/scenarios.js. S2 (2026-11-28) adds opt-in skill
- * install + pack-aware draft static assertions. S3 (2026-11-28) adds the
- * experimental constrained-worker dispatch (pack dispatch + toolFaceApplied) and
- * the real-machine skill probe wording, plus 10-tool / README / DEMO sync.
+ * install + pack-aware draft static assertions. S3 (2026-11-28) adds experimental
+ * worker dispatch + tool-face diagnostics: the copy must say restrict was merely
+ * called (toolFaceApplied) while the real-machine visible tool set stayed 67/67
+ * (toolFace.report.visible / leaked), so v1 promises no isolation, no strict N and
+ * no token savings. The 2026-11-28 reframe locks the 质量调整效率 wording: efficiency
+ * is quality-adjusted (success rate / rework / handoff time), not raw token count.
  */
 
 const ROOT = new URL('../', import.meta.url)
+
+/** Positive promotional claims the v1 copy must not make (negated limitation sentences are allowed). */
+const PROMISE_PATTERNS = [
+  [/省\s*token/, '省 token'],
+  [/节省\s*token/, '节省 token'],
+  [/token\s*(收益|节省)/, 'token 收益'],
+  [/只带\s*\d+\s*个/, '只带 N 个'],
+  [/只(用|装|保留|加载)\s*\d+\s*个\s*工具/, '只用 N 个工具'],
+  [/严格\s*(只带|只给|限制到|控制在)\s*[0-9]+/, '严格只带 N'],
+  [/严格\s*N\s*个工具/, '严格 N 个工具'],
+  [/工具面\s*硬限制/, '工具面硬限制'],
+  [/(已隔离工具|工具面已隔离|工具面隔离)/, '隔离工具面'],
+  [/受限\s*(worker|子代理)/, '受限 worker/子代理'],
+  [/派发受限/, '派发受限'],
+  [/(尝试|已经|能够|可以|会)\s*(裁剪|收紧|缩减)\s*(worker\s*)?工具面/, '裁剪工具面'],
+  [/工具面限制已生效/, '工具面限制已生效'],
+]
+/** A sentence is a limitation (allowed) when it carries a negation marker. */
+const NEGATION = /(不承诺|不保证|不会|不能|无法|并未|未被|不是|并非|而非|没有|不改变|不删|不要)/
+/**
+ * Assert that no sentence of text sells a banned promise. The panel copy may
+ * state these limitations as negations (不承诺 / 不会 / 不是); positive claims fail.
+ */
+function assertNoPromiseClaims(text, label) {
+  const sentences = text.split(/[。；;\n]/)
+  for (const sentence of sentences) {
+    if (NEGATION.test(sentence)) continue
+    for (const pair of PROMISE_PATTERNS) {
+      assert.equal(pair[0].test(sentence), false, label + ' 不得出现承诺措辞「' + pair[1] + '」：' + sentence.trim().slice(0, 100))
+    }
+  }
+}
 
 /** @returns {Promise<string>} client.js source text */
 async function readClientSource() {
@@ -307,7 +343,7 @@ test('client.js（按 pack 派单）：记住最近一次 pack id，onDraft 有 
   assert.ok(block.includes("apiRequest('draft'"), 'onDraft 必须调用 draft 路由')
 })
 
-test('client.js（按 pack 派单）：draft 结果卡对 pack 载荷提示父→子软约束、工具面未被硬限制', async () => {
+test('client.js（按 pack 派单）：draft 结果卡提示父→子软约束、不改变实际可见工具', async () => {
   const source = await readClientSource()
   const start = source.indexOf("result.kind === 'draft'")
   const end = source.indexOf("result.kind === 'dispatch'", start)
@@ -315,9 +351,10 @@ test('client.js（按 pack 派单）：draft 结果卡对 pack 载荷提示父�
   const block = source.slice(start, end)
   assert.ok(block.includes('result.packId'), 'draft 卡必须区分按 pack 生成的载荷')
   assert.ok(block.includes('父→子软约束'), '必须提示这是按装配清单生成的父→子软约束')
-  assert.ok(block.includes('工具面未被硬限制'), '必须如实说明工具面未被硬限制')
+  assert.ok(block.includes('不改变 worker 实际可见工具'), '必须如实说明不改变 worker 实际可见工具')
   assert.ok(block.includes('不删工具 schema'), '必须说明不删工具 schema')
-  assert.ok(block.includes('不省工具面 token'), '必须说明不省工具面 token')
+  assert.equal(block.includes('工具面未被硬限制'), false, '不得再出现「工具面未被硬限制」口径')
+  assert.equal(block.includes('不省工具面 token'), false, '不得再用「省 token」作为卖点（否定式也不行）')
 })
 
 test('client.js（S2 收尾）：全文无「应用即安装」「自动应用」及未验证的热加载宣称', async () => {
@@ -335,9 +372,10 @@ test('client.js（S2 收尾）：全文无「应用即安装」「自动应用�
   assert.ok(source.includes('disable-model-invocation: true'), '必须说明生成技能默认 disable-model-invocation: true')
 })
 
-test('client.js（S3 受限 worker）：操作区「派发受限子代理」按钮按 lastPackId 派发 pack', async () => {
+test('client.js（S3 worker 派发）：操作区「派发 worker（实验性）」按钮按 lastPackId 派发 pack', async () => {
   const source = await readClientSource()
-  assert.ok(source.includes('派发受限子代理'), '工作流操作区必须有「派发受限子代理」按钮')
+  assert.ok(source.includes('派发 worker（实验性）'), '工作流操作区必须有「派发 worker（实验性）」按钮')
+  assert.equal(source.includes('派发受限子代理'), false, '旧按钮「派发受限子代理」必须删除')
   const actionsStart = source.indexOf('function renderMapActions() {')
   const actionsEnd = source.indexOf('function renderMap()', actionsStart)
   assert.ok(actionsStart >= 0 && actionsEnd > actionsStart, '必须能定位 renderMapActions')
@@ -356,25 +394,29 @@ test('client.js（S3 受限 worker）：操作区「派发受限子代理」按�
   assert.equal(handler.includes('openSession'), false, '派发处理不得自动打开会话')
 })
 
-test('client.js（S3 受限 worker）：结果卡展示 worker 会话 / toolFaceApplied / warnings 与实验性限制', async () => {
+test('client.js（S3 worker 派发）：结果卡展示工具面诊断 / toolFaceApplied / warnings 与真机 67/67 证据', async () => {
   const source = await readClientSource()
   const start = source.indexOf("result.kind === 'dispatchPack'")
-  assert.ok(start >= 0, '必须有派发受限 worker 的结果卡分支')
+  assert.ok(start >= 0, '必须有 worker 派发的结果卡分支')
   const end = source.indexOf('return null', start)
   assert.ok(end > start, '必须能定位结果卡结束')
   const block = source.slice(start, end)
   assert.ok(block.includes('worker 会话'), '结果卡必须展示 worker 会话 sessionId')
   assert.ok(block.includes('toolFaceApplied'), '结果卡必须展示 toolFaceApplied')
   assert.ok(block.includes('只说明 restrict 被调用'), 'toolFaceApplied 只代表 restrict 被调用')
-  assert.ok(block.includes('report.visible'), '必须指出 report.visible 才是实际证据')
+  assert.ok(block.includes('report.visible'), '必须指出 report.visible 才是实测证据')
+  assert.ok(block.includes('工具面诊断'), '必须改用工具面诊断口径')
   assert.equal(block.includes('工具面限制已生效'), false, '不得把 toolFaceApplied 写成「已生效」')
   assert.ok(block.includes('payload.toolFace'), '结果卡必须读取 toolFace.requested 等字段')
   assert.ok(block.includes('renderWarningDetails(payload.warnings'), '结果卡必须展示 warnings')
-  assert.ok(block.includes('实验性、尽力而为'), '必须标注实验性、尽力而为')
+  assert.ok(block.includes('实验性'), '必须标注实验性')
+  assert.ok(block.includes('67/67'), '结果卡必须写入真机实测 67/67 未缩减')
+  assert.ok(block.includes('不承诺隔离 worker 工具面'), '必须如实写不承诺隔离 worker 工具面')
   assert.ok(block.includes('run_code'), '必须说明 run_code 可能仍可见')
   assert.ok(block.includes('可能仍可见'), '必须说明清单外工具可能仍可见')
   assert.ok(block.includes('stow_dispatch'), '必须说明与会话内 stow_dispatch 同一实现')
   assert.equal(block.includes('已隔离工具'), false, '不得宣称已隔离工具')
+  assert.equal(block.includes('派发受限'), false, '不得再用「派发受限」口径')
 })
 
 test('client.js（S3）：toolFace.report.visible 结果卡渲染实际可见工具（前 12 个 + 计数 + 实测证据语义）', async () => {
@@ -434,9 +476,10 @@ test('client.js（S3 技能探针）：安装提示写明当前会话未刷新�
 
 test('client.js（S3）：全文不出现「已隔离工具」「严格只带」「热加载无需重启」等不实措辞', async () => {
   const source = await readClientSource()
-  const banned = ['已隔离工具', '严格只带', '热加载无需重启', '无需重启', '热加载已生效', '工具面已隔离', '严格限制到']
+  const banned = ['已隔离工具', '严格只带', '热加载无需重启', '无需重启', '热加载已生效', '工具面已隔离', '严格限制到', '派发受限子代理', '派发受限 worker']
   for (const phrase of banned) assert.equal(source.includes(phrase), false, '不得出现「' + phrase + '」')
   assert.ok(source.includes('10 个 stow_*'), '必须同步 10 个 stow_* 工具数量')
+  assertNoPromiseClaims(source, 'client.js')
 })
 
 test('S3：10 个 stow_* 工具在 client / README / DEMO 同步（含 stow_dispatch）', async () => {
@@ -518,10 +561,10 @@ test('README / DEMO：测试计数一致（badge / 开发命令 / 状态），�
   assert.notEqual(badge, '465', '不得残留旧计数 465')
 })
 
-test('S3：README / DEMO 写明 dispatch kind map/pack + packId、降级矩阵、真机 not-run 与技能探针结论', async () => {
+test('S3：README / DEMO 写明 dispatch kind map/pack + packId、降级矩阵、真机 67/67 诊断与技能探针结论', async () => {
   const readme = await readFile(new URL('README.md', ROOT), 'utf8')
   const demo = await readFile(new URL('docs/DEMO.md', ROOT), 'utf8')
-  assert.ok(readme.includes('实验性：受限 worker'), 'README 必须有「实验性：受限 worker」小节')
+  assert.ok(readme.includes('实验性：worker 派发与工具面诊断'), 'README 必须有「实验性：worker 派发与工具面诊断」小节')
   assert.ok(readme.includes('agent.ctx.tools.restrict'), 'README 必须写机制 agent.ctx.tools.restrict({ allow })')
   assert.ok(readme.includes('toolFaceApplied'), 'README 必须写 toolFaceApplied')
   assert.ok(readme.includes("kind: 'map' | 'pack'"), 'README 必须说明 dispatch 的 kind map/pack')
@@ -529,14 +572,56 @@ test('S3：README / DEMO 写明 dispatch kind map/pack + packId、降级矩阵�
   assert.ok(readme.includes('503'), 'README 降级矩阵必须含 503')
   assert.ok(readme.includes('502'), 'README 降级矩阵必须含 502')
   assert.ok(readme.includes('不承诺严格 N'), 'README 必须明确 v1 不承诺严格 N')
+  assert.ok(readme.includes('67/67'), 'README 必须写入真机 restrict 实测 67/67 未缩减')
   assert.ok(demo.includes('toolFaceApplied'), 'DEMO 必须演示 toolFaceApplied')
-  assert.ok(demo.includes('受限 worker 工具面'), 'DEMO not-run 清单必须含受限 worker 工具面')
+  assert.ok(demo.includes('67/67'), 'DEMO 必须写入真机 restrict 实测 67/67 未缩减')
+  assert.ok(demo.includes('worker 工具面诊断'), 'DEMO not-run 清单必须含 worker 工具面诊断')
   assert.ok(demo.includes('技能新会话可见性'), 'DEMO not-run 清单必须含技能新会话可见性')
   assert.ok(demo.includes('32→32'), 'DEMO 必须写入真机技能探针结果 32→32')
   for (const [label, text] of [['README', readme], ['DEMO', demo]]) {
     for (const phrase of ['热加载无需重启', '无需重启', '已隔离工具', '严格只带', '热加载已生效']) {
       assert.equal(text.includes(phrase), false, label + ' 不得出现「' + phrase + '」')
     }
+    assertNoPromiseClaims(text, label)
     assert.equal(/416/.test(text), false, label + ' 不得残留旧的 416 测试计数')
   }
+})
+
+
+test('产品口径（质量调整效率）：README/DEMO/client/TOOL_SPECS 写清收益口径、真机 67/67 诊断与不承诺项', async () => {
+  const source = await readClientSource()
+  const readme = await readFile(new URL('README.md', ROOT), 'utf8')
+  const demo = await readFile(new URL('docs/DEMO.md', ROOT), 'utf8')
+  const byName = new Map(TOOL_SPECS.map((spec) => [spec.name, spec]))
+  const dispatchSpec = byName.get('stow_dispatch')
+  // 1) 定位：可交接的装配清单 + 软派单载荷，不承诺省 token
+  assert.ok(readme.includes('软派单载荷'), 'README 定位必须写软派单载荷')
+  assert.ok(readme.includes('交接'), 'README 定位必须提交接')
+  assert.equal(readme.includes('能用的工具包'), false, '不得保留「能用的工具包」式过度承诺')
+  // 2) 效率口径：质量调整效率
+  assert.ok(readme.includes('## 效率口径：质量调整效率'), 'README 必须有「效率口径：质量调整效率」小节')
+  assert.ok(readme.includes('(token + 人工时间 + 返工) / 成功率'), '必须给出综合成本定义')
+  assert.ok(readme.includes('当前工具可见量不变，不承诺节省'), 'token 项必须如实写工具可见量不变')
+  for (const metric of ['成功率', '返工轮数', '工具误用', '人工交接时间', 'token 消耗']) {
+    assert.ok(readme.includes(metric), '成功度量必须包含 ' + metric)
+  }
+  assert.ok(readme.includes('A/B'), '度量必须说明需 A/B 实测')
+  assert.ok(readme.includes('不伪造'), '必须说明不伪造数字')
+  assert.ok(demo.includes('质量调整效率'), 'DEMO 必须同步质量调整效率口径')
+  // 3) 真机工具面诊断证据（三处文档 + 工具描述）
+  for (const [label, text] of [['README', readme], ['DEMO', demo], ['client.js', source]]) {
+    assert.ok(text.includes('67/67'), label + ' 必须写 restrict 真机实测 67/67 未缩减')
+    assert.ok(text.includes('report.visible'), label + ' 必须保留 report.visible 诊断证据')
+    assert.ok(text.includes('leaked'), label + ' 必须保留 leaked 诊断证据')
+  }
+  assert.ok(dispatchSpec !== undefined, 'TOOL_SPECS 必须有 stow_dispatch')
+  assert.ok(dispatchSpec.description.includes('工具面诊断'), 'stow_dispatch 描述必须用工具面诊断口径')
+  assert.ok(dispatchSpec.description.includes('软约束'), 'stow_dispatch 描述必须写软约束')
+  assert.ok(dispatchSpec.description.includes('67/67'), 'stow_dispatch 描述必须写真机实测 67/67')
+  assert.ok(dispatchSpec.description.includes('不承诺'), 'stow_dispatch 描述必须写不承诺项')
+  // 4) 全文不得再出现承诺性卖点（否定句除外）
+  assertNoPromiseClaims(readme, 'README')
+  assertNoPromiseClaims(demo, 'DEMO')
+  assertNoPromiseClaims(source, 'client.js')
+  assertNoPromiseClaims(dispatchSpec.description, 'stow_dispatch 描述')
 })

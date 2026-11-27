@@ -610,16 +610,16 @@ test('e2e：apply 默认只导出清单，installSkill=true 才安装技能；dr
   // packId 派单草稿：结构化载荷 + 软约束声明，不要求先扫描
   const draft = await call(ROUTE_PATHS.draft, { kind: 'dispatch', packId: pack.id })
   assert.equal(draft.status, 200, JSON.stringify(draft.json))
-  for (const phrase of ['技能包', '阶段与能力点', '执行步骤', '验收清单', '只使用上述工具/技能；这是软约束，工具面未被硬限制。']) {
+  for (const phrase of ['技能包', '阶段与能力点', '执行步骤', '验收清单', '只使用上述工具/技能；这是软约束，归置不改变工具可见性。']) {
     assert.ok(draft.json.text.includes(phrase), '草稿缺少「' + phrase + '」：\n' + draft.json.text)
   }
   assert.doesNotMatch(draft.json.text, /这个活只需要/)
 })
 
-test('e2e：pack 受限 worker 派发走真实 store 落盘（plan→create→prompt）与软派单降级', async () => {
+test('e2e：pack worker 派发走真实 store 落盘（plan→create→prompt）与软派单降级', async () => {
   const { home, host, call } = await createHarness('guizhi-e2e-')
   assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read']) })).status, 200)
-  const pack = (await call(ROUTE_PATHS.pack, { stageIds: ['understand'], title: '受限包' })).json.pack
+  const pack = (await call(ROUTE_PATHS.pack, { stageIds: ['understand'], title: '演示包' })).json.pack
   const prepared = []
   const forgotten = []
   let createdWith = null
@@ -655,7 +655,7 @@ test('e2e：pack 受限 worker 派发走真实 store 落盘（plan→create→pr
   assert.deepEqual(prepared[0].allowedTools, ['read'])
   assert.deepEqual(createdWith, { sessionId: prepared[0].sessionId })
   assert.ok(promptText.includes('只使用以下工具'), promptText)
-  assert.ok(promptText.includes('受限包'), promptText)
+  assert.ok(promptText.includes('演示包'), promptText)
   assert.deepEqual(forgotten, [])
   // 真实 store 文件：dispatch.json kind=pack，GET state 读回并派生 running
   const persisted = await readJson(join(home, 'dispatch.json'))

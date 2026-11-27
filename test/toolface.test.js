@@ -170,6 +170,7 @@ test('restrict 后仍可见的清单外可限制工具：不报错，但 warning
   assert.equal(result.applied, true)
   assert.deepEqual(result.leaked, ['stow_scan'])
   assert.match(warnings.join('\n'), /仍可见|stow_scan/)
+  assert.match(warnings.join('\n'), /不代表可见工具减少/, '必须说明 restrict 调用不代表可见工具减少')
 })
 
 test('agent/disposed：调用 disposer 一次并清理；无 disposer 时不抛错', () => {
@@ -417,7 +418,7 @@ test('host 适配器：缺 ctx.on / restrictableNames 时 toolFaceSupport=false�
   assert.equal(adapter.prepareWorkerToolFace('s1', ['read']), false)
   assert.equal(adapter.prepareWorkerToolFace('s2', ['read']), false)
   assert.equal(
-    warnings.filter((message) => message.includes('工具面限制') || message.includes('软约束')).length,
+    warnings.filter((message) => message.includes('工具面诊断') || message.includes('软约束')).length,
     1,
     '同一不可用原因只 warning 一次：' + warnings.join(' | '),
   )

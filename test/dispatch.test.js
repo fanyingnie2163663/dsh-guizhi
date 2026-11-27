@@ -72,7 +72,7 @@ test('describeDispatch 不泄漏 requestId，保留可展示字段', () => {
   assert.equal('requestId' in out, false)
 })
 
-/* ------------------------------------------------- S3：pack 受限 worker */
+/* ------------------------------------------------- S3：pack worker */
 
 /** A stored pack with two stages, duplicate tool names and one skill. */
 const PACK = {
@@ -104,11 +104,11 @@ test('allowedToolsForPack：去重、排除空串/非字符串，不自动加入
   assert.deepEqual(allowedToolsForPack({}), [])
 })
 
-test('buildPackWorkerPrompt：受限 worker、只使用清单工具、软约束与验收清单', () => {
+test('buildPackWorkerPrompt：中性 worker、只使用清单工具、软约束与验收清单', () => {
   const text = buildPackWorkerPrompt(PACK)
   for (const phrase of [
     '归置',
-    '受限 worker',
+    '派发的 worker',
     '研发包',
     'pack-abcd1234',
     '理解需求',
@@ -129,6 +129,8 @@ test('buildPackWorkerPrompt：受限 worker、只使用清单工具、软约束�
   // 不得包含本机路径或用量信息
   assert.doesNotMatch(text, /[A-Za-z]:[\\/]|\/Users\/|\/home\/|used30d|近 ?30 天|本机路径/)
   assert.doesNotMatch(text, /这个活只需要/)
+  // 不得再出现承诺性口径（硬限制 / 裁剪 / 省 token / 受限 worker）
+  assert.doesNotMatch(text, /受限 worker|工具面限制|裁剪|硬限制|省 ?token/)
 })
 
 test('buildPackWorkerPrompt：空清单仍给出结构化 worker prompt 并写明没有工具', () => {
@@ -138,5 +140,6 @@ test('buildPackWorkerPrompt：空清单仍给出结构化 worker prompt 并写�
   assert.match(text, /只使用以下工具/)
   assert.match(text, /软约束/)
   const unknown = buildPackWorkerPrompt(undefined)
-  assert.match(unknown, /受限 worker/)
+  assert.match(unknown, /派发的 worker/)
+  assert.doesNotMatch(unknown, /受限 worker/)
 })

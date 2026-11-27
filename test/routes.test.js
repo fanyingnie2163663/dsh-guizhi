@@ -1781,7 +1781,7 @@ test('POST draft：packId 命中时按装配清单生成结构化父→子派单
     'brainstorming',
     '执行步骤',
     '验收清单',
-    '只使用上述工具/技能；这是软约束，工具面未被硬限制。',
+    '只使用上述工具/技能；这是软约束，归置不改变工具可见性。',
   ]) {
     assert.ok(text.includes(phrase), '草稿缺少「' + phrase + '」：\n' + text)
   }
@@ -1798,7 +1798,7 @@ test('POST draft：packId 命中空清单时仍返回结构化草稿并写明没
   assert.match(response.json.text, /空包/)
   assert.match(response.json.text, /本装配清单没有工具/)
   assert.match(response.json.text, /本装配清单没有技能/)
-  assert.match(response.json.text, /只使用上述工具\/技能；这是软约束，工具面未被硬限制。/)
+  assert.match(response.json.text, /只使用上述工具\/技能；这是软约束，归置不改变工具可见性。/)
 })
 
 test('POST draft：packId 不存在是 400 PACK_NOT_FOUND；非字符串是 400 PACK_ID_INVALID', async () => {
@@ -1832,7 +1832,7 @@ test('TOOL_SPECS 回归（S2 加固）：stow_apply.installSkill 可选 boolean�
   assert.match(byName.get('stow_draft').description, /packId/)
 })
 
-/* ------------------------------------------------- S3：pack 受限 worker 派发 */
+/* ------------------------------------------------- S3：pack worker 派发 */
 
 /** 一份真实 pack + 对应的 packs 存储文档（pack dispatch 用）。 */
 function packDispatchFixture() {
@@ -1840,7 +1840,7 @@ function packDispatchFixture() {
   return { pack, store: createFakeStore({ packs: { packs: [pack] } }) }
 }
 
-test('POST dispatch：kind="pack" 用预生成 session id 创建受限 worker 并记录 toolFaceApplied', async () => {
+test('POST dispatch：kind="pack" 用预生成 session id 创建 worker 并记录 toolFaceApplied', async () => {
   const { pack, store } = packDispatchFixture()
   const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true } })
   const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
@@ -1864,7 +1864,9 @@ test('POST dispatch：kind="pack" 用预生成 session id 创建受限 worker �
   assert.ok(promptText.includes('研发包'), promptText)
   assert.ok(promptText.includes('软约束'), promptText)
   assert.ok(promptText.includes('若清单外工具仍可见'), promptText)
+  assert.ok(promptText.includes('归置不会改变 worker 的工具可见性'), promptText)
   assert.ok(promptText.includes('验收清单'), promptText)
+  assert.doesNotMatch(promptText, /受限 worker|工具面限制|裁剪|硬限制/, 'worker prompt 不得再出现承诺性口径')
   assert.equal(promptText.includes('本机路径'), false)
   // 持久化 dispatch 记录 kind=pack
   const written = store.docs.get('dispatch')
@@ -2033,7 +2035,7 @@ test('POST dispatch（B）：空装配清单只做软派单，不调用工具面
   assert.equal(store.docs.get('dispatch').kind, 'pack')
 })
 
-test('POST dispatch（C）：上一单 pack 已完成时，map 派单不复用受限 worker 会话', async () => {
+test('POST dispatch（C）：上一单 pack 已完成时，map 派单不复用 pack worker 会话', async () => {
   const { pack, store } = packDispatchFixture()
   const dispatchEvents = []
   const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true, dispatchEvents } })
@@ -2053,7 +2055,7 @@ test('POST dispatch（C）：上一单 pack 已完成时，map 派单不复用�
   assert.equal(mapResponse.status, 200, JSON.stringify(mapResponse.json))
   assert.equal(mapResponse.json.dispatch.kind, 'map')
   assert.equal(deps.host.dispatchState.sessionsCreated, 2, '跨 kind 必须新建 map 会话')
-  assert.notEqual(deps.host.dispatchCalls[1].sessionId, packRecord.sessionId, '不得把地图拆解任务投进受限 worker 会话')
+  assert.notEqual(deps.host.dispatchCalls[1].sessionId, packRecord.sessionId, '不得把地图拆解任务投进 pack worker 会话')
   const mapRecord = store.docs.get('dispatch')
   assert.equal(mapRecord.kind, 'map')
   assert.notEqual(mapRecord.sessionId, packRecord.sessionId)
