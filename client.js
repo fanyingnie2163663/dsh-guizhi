@@ -106,6 +106,26 @@
     daily: 'sun',
   }
 
+  /**
+   * One-click catalog presets. A chip only fills the URL input — it never saves
+   * and never requests the source; the user still has to press 「保存」. Keep in
+   * sync with the README 「推荐源」 table (guarded by test/client-sync.test.js).
+   */
+  var SOURCE_PRESETS = [
+    {
+      id: 'dshopen',
+      label: 'dshopen 开放市场',
+      url: 'https://dshopen.org/index.json',
+      note: '社区索引 · 实测约 3s、缓存约 0.6MB（在 1MB 缓存上限内）',
+    },
+    {
+      id: 'jsdelivr',
+      label: 'jsDelivr 精选索引',
+      url: 'https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json',
+      note: '索引较大 · 实测约 7s、缓存约 3.2MB，超过 1MB 缓存上限，会每次重新拉取',
+    },
+  ]
+
   /** Human labels for the evidence keys the host half writes; unknown keys show raw. */
   var EVIDENCE_LABELS = {
     source: '来源',
@@ -391,6 +411,7 @@
       '.gz-sources-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}',
       '.gz-sources-head strong{font-size:12px;font-weight:650;color:var(--gz-text)}',
       '.gz-sources-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.gz-sources-presets{display:flex;flex-direction:column;gap:6px}',
       '.gz-sources-input{flex:1 1 260px;min-width:0}',
       '.gz-progress{display:flex;align-items:center;gap:14px;border:1px solid var(--gz-line,rgba(127,127,127,.24));border-radius:var(--gz-radius-md);padding:12px;background:rgba(127,127,127,.05)}',
       '.gz-progress-ring{position:relative;display:flex;align-items:center;justify-content:center;width:72px;height:72px;flex:0 0 auto}',
@@ -783,13 +804,35 @@
         saveSource('')
       }
 
+      /** Fill the URL input from a recommended-source chip; never saves, never requests. */
+      function applySourcePreset(preset) {
+        setSourceDraft({ url: truncateByCodePoints(preset.url, 500), touched: true })
+      }
+
       function renderSources() {
         var busy = action.busy !== ''
-        var configured = typeof sourceDraft.url === 'string' && sourceDraft.url.trim() !== ''
+        var draftUrl = typeof sourceDraft.url === 'string' ? sourceDraft.url : ''
+        var savedUrl = sourcesDoc !== null && typeof sourcesDoc.url === 'string' ? sourcesDoc.url : ''
+        var configured = draftUrl.trim() !== ''
+        var dirty = draftUrl !== savedUrl
         return h('div', { className: 'gz-sources' },
           h('div', { className: 'gz-sources-head' },
             h('strong', {}, '目录源'),
-            h('span', { className: 'gz-hint' }, '查缺补漏用 · 目录格式与推荐源见 README「目录源」'),
+            h('span', { className: 'gz-hint' }, '查缺补漏用 · 目录格式见 README「目录源」'),
+          ),
+          h('div', { className: 'gz-sources-presets' },
+            h('span', { className: 'gz-hint' }, '推荐源（第三方 · 非官方）：点一下只填入输入框，不自动保存、不主动联网'),
+            h('div', { className: 'gz-chips' }, SOURCE_PRESETS.map(function (preset) {
+              return h('button', {
+                key: preset.id,
+                type: 'button',
+                className: 'gz-chip gz-source-preset',
+                title: preset.url + ' —— ' + preset.note + '（点一下只填入，不自动保存）',
+                onClick: function () {
+                  applySourcePreset(preset)
+                },
+              }, preset.label)
+            })),
           ),
           h('div', { className: 'gz-sources-row' },
             h('input', {
@@ -804,8 +847,12 @@
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onSaveSource }, '保存'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onClearSource }, '清空'),
           ),
-          h('p', { className: 'gz-hint' }, configured ? '已填写；保存后点「查缺补漏」或「一键整理」会使用该目录（缓存 6 小时，不可达会明确报错）。' : '只接受 http(s) 链接；推荐源与 format-1 目录示例见 README。保存后点「查缺补漏」或「一键整理」。'),
-          h('p', { className: 'gz-hint' }, '不内置默认目录源：外部目录只当数据读取，是否信任由你决定。'),
+          h('p', { className: 'gz-hint' }, dirty
+            ? '已填入但未保存：点「保存」后才生效（推荐源只填入，不会自动保存，也不会主动联网）。'
+            : configured
+              ? '已保存；点「查缺补漏」或「一键整理」会使用该目录（缓存 6 小时，不可达会明确报错）。'
+              : '只接受 http(s) 链接；可点上方推荐源快速填入，或粘贴自己的 format-1 目录地址。保存后点「查缺补漏」或「一键整理」。'),
+          h('p', { className: 'gz-hint' }, '不内置默认目录源：推荐源只是快捷填入，外部目录只当数据读取，是否信任由你决定。'),
         )
       }
 

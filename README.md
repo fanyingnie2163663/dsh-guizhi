@@ -7,7 +7,7 @@
 <p align="center"><b>看清你装了什么，按你的工作流归置成能用的工具包。</b></p>
 
 <p align="center">
-  <a href="https://github.com/fanyingnie2163663/dsh-guizhi/actions"><img src="https://img.shields.io/badge/tests-324%20passing-2ea44f" alt="tests"></a>
+  <a href="https://github.com/fanyingnie2163663/dsh-guizhi/actions"><img src="https://img.shields.io/badge/tests-325%20passing-2ea44f" alt="tests"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A524.9-339933" alt="node">
   <img src="https://img.shields.io/badge/DSH-%E2%89%A50.2.2-4d6bfe" alt="dsh">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
@@ -32,7 +32,7 @@
 
 ## 参与与支持
 
-- **欢迎 PR**：bug 修复、文档修正、新的场景与公共目录源，以及 [状态与已知限制](#状态与已知限制) 里 v1.1 backlog 的任何一项都欢迎。较大的改动建议先开 issue 对一下方向；提交前跑一遍 `node --test test/*.test.js`（324 个测试），保持全绿。
+- **欢迎 PR**：bug 修复、文档修正、新的场景与公共目录源，以及 [状态与已知限制](#状态与已知限制) 里 v1.1 backlog 的任何一项都欢迎。较大的改动建议先开 issue 对一下方向；提交前跑一遍 `node --test test/*.test.js`（325 个测试），保持全绿。
 - **点个 Star**：如果归置帮你理清了插件、工具和技能，欢迎给 [fanyingnie2163663/dsh-guizhi](https://github.com/fanyingnie2163663/dsh-guizhi) 点个 ⭐。对这类小工具来说，star 是「继续维护」最直接的信号，也能让更多需要它的人发现它。
 - **反馈问题**：用 [GitHub Issues](https://github.com/fanyingnie2163663/dsh-guizhi/issues) 提，附上 DSH 版本、`node -v`、复现步骤和截图更好；真机验收清单见 [`docs/DEMO.md`](docs/DEMO.md) §4。
 
@@ -143,15 +143,17 @@ dsh plugin --profile <profile> add @fanyingnie/dsh-guizhi
 
 **在面板里填**：工作流页 →「目录源」输入框 → 粘贴 http(s) 地址 →「保存」。配置写入 `$DSH_HOME/guizhi/sources.json`；随后「查缺补漏」或「一键整理」就会使用它（结果缓存 6 小时；不可达/格式错会明确报错并 fail-open，不会显示成「没有缺口」）。
 
-**推荐源**（截至 2026-11-27 已联网核对前三个可访问源的返回形状；外部目录随时可能变化，填入后点一次「查缺补漏」即可确认能否解析）：
+**面板里的推荐源**：输入框上方有一排推荐源胶囊（dshopen、jsDelivr 精选）。点一下只会把地址**填入输入框**——不自动保存，也不会主动发起请求；确认来源后自己点「保存」才生效。推荐源均为第三方目录、非官方，是否信任由你决定。
 
-| 源 | 地址 | 说明 |
-|---|---|---|
-| dshopen 开放插件市场 | `https://dshopen.org/index.json` | 社区维护的独立索引；`title` 为 `{en,zh}` 本地化对象 |
-| Awesome DSH Plugin（jsDelivr） | `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json` | 社区精选列表的 format-1 索引，npm/CDN 分发；DSH 0.2.1+ 的「插件 → 发现 → 索引源」也用它 |
-| Awesome DSH Plugin（源站） | `https://awesome-dsh-plugin.com/index.json` | 同一份目录的 GitHub Pages 源站；部分网络可能较慢 |
-| dsh-market 镜像 | `https://dshmarket.com/index.json` | 同一份目录的镜像；本次核验超时，未确认可用 |
-| 自托管示例 | 把 [`docs/catalog.example.json`](docs/catalog.example.json) 放到任意 HTTPS 静态地址 | 纯字符串字段的简化示例，插件条目请按你的真实来源替换 |
+**推荐源**（2026-11-27 联网核对了前三个可访问源的返回形状；外部目录随时可能变化，填入后点一次「查缺补漏」即可确认能否解析）：
+
+| 源 | 地址 | 实测（2026-11-27，本机） | 说明 |
+|---|---|---|---|
+| dshopen 开放插件市场 | `https://dshopen.org/index.json` | 2.8s · 2.4MB · 缓存 594KB（在 1MB 内） | 社区维护的独立索引；`title` 为 `{en,zh}` 本地化对象；**面板推荐源之一** |
+| Awesome DSH Plugin（jsDelivr） | `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json` | 6.9s · 5.7MB · 缓存 3.2MB（超 1MB 上限，会每次重拉） | 社区精选列表的 format-1 索引，npm/CDN 分发；DSH 0.2.1+ 的「插件 → 发现 → 索引源」也用它；**面板推荐源之一** |
+| Awesome DSH Plugin（源站） | `https://awesome-dsh-plugin.com/index.json` | 浏览器通道可访问；node 直连 >20s 超时 | 同一份目录的 GitHub Pages 源站；部分网络很慢 |
+| dsh-market 镜像 | `https://dshmarket.com/index.json` | 超时，未确认 | 同一份目录的镜像；本次未核验通过 |
+| 自托管示例 | 把 [`docs/catalog.example.json`](docs/catalog.example.json) 放到任意 HTTPS 静态地址 | 取决于托管位置 | 纯字符串字段的简化示例，插件条目请按你的真实来源替换 |
 
 > 自托管示例的 raw 地址形如 `https://raw.githubusercontent.com/<你的 GitHub 账号>/dsh-guizhi/v1/docs/catalog.example.json`（需对应分支已推送）。目录源不内置默认值：外部内容默认不可信，选哪个由你决定。
 >
@@ -214,7 +216,7 @@ $DSH_HOME/guizhi/
 
 ```bash
 pnpm install                    # 仅 yaml 运行时依赖
-node --test test/*.test.js      # 324 个测试
+node --test test/*.test.js      # 325 个测试
 node --check client.js lib/*.js # 语法检查（无构建步骤）
 ```
 
@@ -228,7 +230,7 @@ test/          node:test：单元 + 路由 + HTTP 适配 + e2e
 
 ## 状态与已知限制
 
-- **v0.1 功能已实现**：324/324 测试通过（已合并到 `main`；npm `0.1.0` 为 0.x 早期版本）。
+- **v0.1 功能已实现**：325/325 测试通过（已合并到 `main`；npm `0.1.0` 为 0.x 早期版本）。
 - **真机验证仍待执行**：安装、重启、面板渲染、路由可达、9 工具真实注册调用、≥20 插件真机扫描、录屏、用户测试 —— 步骤见 [`docs/DEMO.md`](docs/DEMO.md) §4；本 README 不宣称真机通过。
 - **v1 未实现（→ v1.1 backlog）**：插件行安装与「需要新会话/重启」提示、能力点「生效方式/需单开会话」徽章、清爽页重复/冲突与上下文成本、应用抽屉逐条启用/忽略、冗余提案与来源信任等级、无 client 插件时的 HTML 报告兜底、场景→工作流自动拆解。
 

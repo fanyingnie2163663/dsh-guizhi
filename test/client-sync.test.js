@@ -126,6 +126,25 @@ test('client.js（目录源）：工作流页可填目录源并保存', async ()
   assert.ok(source.includes('保存目录源'))
 })
 
+test('client.js（推荐源）：预置源只填入输入框，不自动保存、不主动请求', async () => {
+  const source = await readClientSource()
+  assert.ok(source.includes('SOURCE_PRESETS'), 'client.js 必须声明 SOURCE_PRESETS')
+  assert.ok(source.includes('https://dshopen.org/index.json'), 'dshopen 必须在推荐源里')
+  assert.ok(
+    source.includes('https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json'),
+    'jsDelivr 精选索引必须在推荐源里',
+  )
+  assert.ok(source.includes('第三方'), '推荐源必须标注第三方')
+  const start = source.indexOf('function applySourcePreset')
+  assert.ok(start >= 0, '必须有 applySourcePreset')
+  const end = source.indexOf('function renderSources', start)
+  assert.ok(end > start, 'applySourcePreset 必须在 renderSources 之前')
+  const block = source.slice(start, end)
+  assert.ok(block.includes('setSourceDraft'), '推荐源只能改输入框草稿')
+  assert.equal(block.includes('apiRequest'), false, '推荐源不得发请求')
+  assert.equal(block.includes('saveSource'), false, '推荐源不得自动保存')
+})
+
 
 
 
