@@ -192,6 +192,23 @@ test('map：capability 必须带 evidence 对象，缺 evidence 被拒', () => {
   assert.ok(failing(schemas.map.validate(notObject)).some((message) => message.includes('evidence')))
 })
 
+test('map：capability 可选 suggestion 字符串（精简建议），非字符串被拒', () => {
+  const map = validMap()
+  map.stages[0].capabilities[0].suggestion = '保留一个即可。'
+  assert.deepEqual(schemas.map.validate(map), { ok: true, errors: [] })
+
+  const empty = validMap()
+  empty.stages[0].capabilities[0].suggestion = ''
+  assert.deepEqual(schemas.map.validate(empty), { ok: true, errors: [] }, 'D7 的 string 允许空字符串')
+
+  for (const bad of [42, null, [], {}]) {
+    const broken = validMap()
+    broken.stages[0].capabilities[0].suggestion = bad
+    const errors = failing(schemas.map.validate(broken))
+    assert.ok(errors.some((message) => message.includes('suggestion')), JSON.stringify(errors))
+  }
+})
+
 test('map：未知字段一律判错（顶层/stage/capability）', () => {
   const top = validMap()
   top.summary = 'x'
@@ -280,6 +297,26 @@ test('pack：未知字段判错；stageIds 必须是字符串数组', () => {
   const badStageIds = validPack()
   badStageIds.stageIds = ['understand', 7]
   assert.ok(failing(schemas.pack.validate(badStageIds)).some((message) => message.includes('stageIds[1]')))
+})
+
+test('pack：rows 可携带能力点派生行（openObject），非对象行仍被拒', () => {
+  const populated = validPack()
+  populated.rows = [
+    {
+      stageId: 'understand',
+      stageTitle: '理解需求',
+      capabilityId: 'read-code',
+      capabilityTitle: '读代码',
+      status: 'have',
+      tools: ['read'],
+      skills: [],
+    },
+  ]
+  assert.deepEqual(schemas.pack.validate(populated), { ok: true, errors: [] })
+
+  const notObjectRow = validPack()
+  notObjectRow.rows = ['read']
+  assert.ok(failing(schemas.pack.validate(notObjectRow)).some((message) => message.includes('rows[0]')))
 })
 
 test('proposals：合法提案通过；kind 枚举与 evidence.source 必填', () => {

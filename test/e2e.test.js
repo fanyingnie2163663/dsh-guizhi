@@ -1,6 +1,6 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStore } from '../lib/store.js'
@@ -65,11 +65,11 @@ async function readJson(file) {
   return JSON.parse(await readFile(file, 'utf8'))
 }
 
-/** Create a temp data root ($DSH_HOME/guizhi equivalent) cleaned up after the suite. */
+/** Create a temp $DSH_HOME-equivalent root ($DSH_HOME/guizhi lives under it). */
 async function createHome(prefix) {
-  const home = await mkdtemp(join(tmpdir(), prefix))
-  cleanup.push(home)
-  return home
+  const root = await mkdtemp(join(tmpdir(), prefix))
+  cleanup.push(root)
+  return root
 }
 
 /** Duplicate 'read' owner rows + every tool/call event shape the usage scanner reads. */
@@ -141,15 +141,22 @@ function createFakeHost(options = {}) {
   }
 }
 
-/** Real store + injected fake host/catalog over one temp data root; real route handlers. */
+/**
+ * Real store + injected fake host/catalog over one temp root; real route
+ * handlers. Data root = <root>/guizhi and skills root = <root>/skills, exactly
+ * like lib/index.js derives $DSH_HOME/skills from $DSH_HOME/guizhi.
+ */
 async function createHarness(prefix) {
-  const home = await createHome(prefix)
+  const root = await createHome(prefix)
+  const home = join(root, 'guizhi')
+  const skillsHome = join(root, 'skills')
   const store = createStore({ home })
   const host = createFakeHost()
   const deps = {
     host,
     store,
     home,
+    skillsHome,
     now: () => new Date(NOW),
     catalog: { entries: CATALOG_ENTRIES, stale: false, error: null },
   }
@@ -160,7 +167,7 @@ async function createHarness(prefix) {
     assert.equal(typeof handler, 'function', '缺少路由 ' + path)
     return handler(payload)
   }
-  return { home, store, host, deps, call }
+  return { home, skillsHome, store, host, deps, call }
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +220,7 @@ test('scan：会话事件源不可用时用量未知（used30d null，不写成 
 // ---------------------------------------------------------------------------
 
 test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 → 回滚 全链路', async () => {
-  const { home, store, call } = await createHarness('guizhi-e2e-')
+  const { home, skillsHome, store, call } = await createHarness('guizhi-e2e-')
   const stateFile = (name) => join(home, name + '.json')
 
   // --- 0) 空状态：四份文档都不存在（首次使用不是错误） -------------------
@@ -224,6 +231,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.equal(initial.json.proposals, null)
   assert.equal(initial.json.selections, null)
   assert.deepEqual(initial.json.warnings, [])
+  assert.deepEqual(initial.json.advice, { items: [] }, '空状态没有建议')
 
   // --- 1) 无地图时 gaps 必须是 400 NO_MAP，且不写 proposals（R-7A） ------
   const noMap = await call(ROUTE_PATHS.gaps, {})
@@ -276,7 +284,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
       title: '交付',
       capabilities: [
         { id: 'web-search', title: '联网搜索', status: 'missing', evidence: { source: 'catalog' } },
-        { id: 'notes', title: '笔记', status: 'redundant', evidence: { source: 'scan', tools: [] } },
+        { id: 'notes', title: '笔记', status: 'redundant', evidence: { source: 'scan', tools: [] }, suggestion: '保留一个笔记技能即可。' },
         {
           id: 'write-doc',
           title: '写文档',
@@ -295,6 +303,13 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.equal(mapResponse.status, 200)
   assert.deepEqual(mapResponse.json, { ok: true })
   assert.deepEqual(await readJson(stateFile('map')), map)
+  const mapState = await call(ROUTE_PATHS.state, {})
+  assert.equal(mapState.status, 200)
+  const notesAdvice = mapState.json.advice.items.find((item) => item.capabilityId === 'notes')
+  assert.ok(notesAdvice !== undefined, 'GET state 应返回冗余能力点的精简建议')
+  assert.equal(notesAdvice.source, 'map')
+  assert.equal(notesAdvice.text, '保留一个笔记技能即可。')
+  assert.equal(mapState.json.map.stages[1].capabilities[1].suggestion, '保留一个笔记技能即可。')
 
   // --- 5) 查缺补漏：注入 catalog，真实 matchGaps 后写 proposals ----------
   const expectedGapItems = matchGaps({ scan, map, catalog: { entries: CATALOG_ENTRIES } })
@@ -333,7 +348,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
     id: pack.id,
     kind: 'pack',
     title: packTitle,
-    effect: '导出能力包 研发交付包（3 个工具 / 2 个技能）',
+    effect: '导出装配清单 研发交付包（3 个工具 / 2 个技能）；应用时可选择安装工作流技能 stow-' + pack.id + '（默认不安装）',
     evidence: { source: 'map', refs: stageIds },
   })
   await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' }, 'R-PACK：/pack 不得写 packs/ 文件')
@@ -359,7 +374,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.equal(previewAll.json.items[0].title, gapItem.title)
   assert.equal(previewAll.json.items[0].effect, gapItem.effect)
   assert.equal(previewAll.json.items[1].title, packTitle)
-  assert.match(previewAll.json.items[1].effect, /导出能力包/)
+  assert.match(previewAll.json.items[1].effect, /导出装配清单/)
 
   // Snapshot the pre-apply state (after /pack) for the final restore assertion.
   const preApply = await call(ROUTE_PATHS.state, {})
@@ -369,7 +384,7 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   // --- 8) 应用：apply 才落盘——快照 → 台账（含 existedBefore）→ 包文件 ---
   // F2/R-8A：apply 直接导出 /pack 时存储的 pack，不再用当前 map 重建。
   const expectedAppliedPack = pack
-  const applyResponse = await call(ROUTE_PATHS.apply, { ids: [packProposal.id, gapItem.id] })
+  const applyResponse = await call(ROUTE_PATHS.apply, { ids: [packProposal.id, gapItem.id], installSkill: true })
   assert.equal(applyResponse.status, 200, JSON.stringify(applyResponse.json))
   assert.deepEqual(applyResponse.json.applied, [packProposal.id], 'install 提案 v1 不应用')
   assert.equal(applyResponse.json.warnings.length, 1)
@@ -394,6 +409,18 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.deepEqual(expectedAppliedPack.tools, ['read', 'grep', 'write'])
   assert.deepEqual(expectedAppliedPack.skills, ['brainstorming', 'writing-plans'])
 
+  // S2: apply 同时把非空装配清单安装成工作流技能（SKILL.md）
+  const skillName = 'stow-' + expectedAppliedPack.id
+  const skillPath = join(skillsHome, skillName, 'SKILL.md')
+  assert.deepEqual(applyResponse.json.skills, [{ name: skillName, path: skillPath }], 'S2：apply 响应必须带 skills')
+  const skillMarkdown = await readFile(skillPath, 'utf8')
+  assert.match(skillMarkdown, /^---\nname: "stow-/)
+  assert.match(skillMarkdown, new RegExp(packTitle))
+  assert.match(skillMarkdown, /## 验收清单/)
+  assert.deepEqual(await readJson(join(home, 'snapshots', snapshotId, 'skills-created.json')), {
+    entries: [{ name: skillName, path: skillPath, existedBefore: false }],
+  })
+
   // Change a state document after apply so rollback restore is observable.
   const mutated = await call(ROUTE_PATHS.scenarios, { selected: ['daily'], custom: 'apply 之后的改动' })
   assert.equal(mutated.status, 200)
@@ -405,6 +432,9 @@ test('e2e：scan → 场景 → 地图 → 缺口 → 包 → 预览 → 应用 
   assert.deepEqual(rollbackResponse.json, { restored: true })
   await assert.rejects(stat(appliedPackPath), { code: 'ENOENT' }, '台账记录的包文件必须被删除')
   assert.deepEqual(await readdir(join(home, 'packs')), [], '回滚后本次导出的包文件不残留')
+  // S2: 回滚同时删除本次安装的技能文件与空目录
+  await assert.rejects(stat(skillPath), { code: 'ENOENT' }, '回滚必须删除本次安装的技能')
+  await assert.rejects(stat(join(skillsHome, skillName)), { code: 'ENOENT' })
   assert.deepEqual(await readJson(stateFile('packs')), storedPacks, 'rollback 恢复 apply 前的 packs 状态')
 
   const restoredState = await call(ROUTE_PATHS.state, {})
@@ -513,4 +543,117 @@ test('R-8A：提案存在但 store(packs) 缺失该包 → apply 400 PACK_NOT_FO
   assert.equal(response.status, 400, JSON.stringify(response.json))
   assert.equal(response.json.code, 'PACK_NOT_FOUND')
   await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' })
+})
+
+test('S2：apply 安装工作流技能；覆盖旧 SKILL.md 后 rollback 恢复旧字节，重复回滚幂等（端到端）', async () => {
+  const { home, skillsHome, call } = await createHarness('guizhi-e2e-')
+  assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read']) })).status, 200)
+  const pack = (await call(ROUTE_PATHS.pack, { stageIds: ['understand', 'deliver'], title: '技能包' })).json.pack
+  const skillName = 'stow-' + pack.id
+  const target = join(skillsHome, skillName, 'SKILL.md')
+  await mkdir(join(skillsHome, skillName), { recursive: true })
+  const oldBytes = Buffer.from('# 旧技能\n旧字节\n', 'utf8')
+  await writeFile(target, oldBytes)
+  const applied = await call(ROUTE_PATHS.apply, { ids: [pack.id], installSkill: true })
+  assert.equal(applied.status, 200, JSON.stringify(applied.json))
+  assert.deepEqual(applied.json.skills, [{ name: skillName, path: target }])
+  const written = await readFile(target, 'utf8')
+  assert.notEqual(written, oldBytes.toString('utf8'))
+  assert.match(written, /技能包/)
+  assert.match(written, /## 验收清单/)
+  assert.deepEqual(await readJson(join(home, 'snapshots', applied.json.snapshotId, 'skills-created.json')), {
+    entries: [{ name: skillName, path: target, existedBefore: true }],
+  })
+  assert.deepEqual(
+    await readFile(join(home, 'snapshots', applied.json.snapshotId, 'skills-backup', skillName, 'SKILL.md')),
+    oldBytes,
+    '覆盖前旧字节必须有备份',
+  )
+  const rolled = await call(ROUTE_PATHS.rollback, { snapshotId: applied.json.snapshotId })
+  assert.equal(rolled.status, 200, JSON.stringify(rolled.json))
+  assert.deepEqual(await readFile(target), oldBytes, '回滚必须恢复旧技能字节')
+  const again = await call(ROUTE_PATHS.rollback, { snapshotId: applied.json.snapshotId })
+  assert.equal(again.status, 200)
+  assert.deepEqual(await readFile(target), oldBytes, '重复回滚恢复同一份旧字节')
+  // 第二次 apply → rollback：备份来自第二份快照，仍恢复旧字节
+  const second = await call(ROUTE_PATHS.apply, { ids: [pack.id], installSkill: true })
+  assert.equal(second.status, 200, JSON.stringify(second.json))
+  assert.notEqual(await readFile(target, 'utf8'), oldBytes.toString('utf8'))
+  const secondRollback = await call(ROUTE_PATHS.rollback, { snapshotId: second.json.snapshotId })
+  assert.equal(secondRollback.status, 200)
+  assert.deepEqual(await readFile(target), oldBytes)
+})
+
+test('e2e：apply 默认只导出清单，installSkill=true 才安装技能；draft packId 生成父→子派单载荷', async () => {
+  const { home, skillsHome, call } = await createHarness('guizhi-e2e-')
+  assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read']) })).status, 200)
+  const pack = (await call(ROUTE_PATHS.pack, { stageIds: ['understand', 'deliver'], title: '技能包' })).json.pack
+  const skillName = 'stow-' + pack.id
+  const skillPath = join(skillsHome, skillName, 'SKILL.md')
+
+  // 缺省：deps 里有 skillsHome 也只导出装配清单，不安装技能、响应 skills 为空
+  const defaultApply = await call(ROUTE_PATHS.apply, { ids: [pack.id] })
+  assert.equal(defaultApply.status, 200, JSON.stringify(defaultApply.json))
+  assert.deepEqual(defaultApply.json.skills, [])
+  await assert.rejects(stat(skillPath), { code: 'ENOENT' })
+  assert.equal((await stat(join(home, 'packs', pack.id + '.json'))).isFile(), true)
+
+  // opt-in：安装技能到 $DSH_HOME/skills，并可由 rollback 删除
+  const optedIn = await call(ROUTE_PATHS.apply, { ids: [pack.id], installSkill: true })
+  assert.equal(optedIn.status, 200, JSON.stringify(optedIn.json))
+  assert.deepEqual(optedIn.json.skills, [{ name: skillName, path: skillPath }])
+  assert.equal((await stat(skillPath)).isFile(), true)
+  const rollback = await call(ROUTE_PATHS.rollback, { snapshotId: optedIn.json.snapshotId })
+  assert.equal(rollback.status, 200, JSON.stringify(rollback.json))
+  await assert.rejects(stat(skillPath), { code: 'ENOENT' })
+
+  // packId 派单草稿：结构化载荷 + 软约束声明，不要求先扫描
+  const draft = await call(ROUTE_PATHS.draft, { kind: 'dispatch', packId: pack.id })
+  assert.equal(draft.status, 200, JSON.stringify(draft.json))
+  for (const phrase of ['技能包', '阶段与能力点', '执行步骤', '验收清单', '只使用上述工具/技能；这是软约束，工具面未被硬限制。']) {
+    assert.ok(draft.json.text.includes(phrase), '草稿缺少「' + phrase + '」：\n' + draft.json.text)
+  }
+  assert.doesNotMatch(draft.json.text, /这个活只需要/)
+})
+
+test('e2e：pack 受限 worker 派发走真实 store 落盘（plan→create→prompt）与软派单降级', async () => {
+  const { home, host, call } = await createHarness('guizhi-e2e-')
+  assert.equal((await call(ROUTE_PATHS.map, { map: mapWithUnderstandTools(['read']) })).status, 200)
+  const pack = (await call(ROUTE_PATHS.pack, { stageIds: ['understand'], title: '受限包' })).json.pack
+  const prepared = []
+  const forgotten = []
+  let createdWith = null
+  let promptText = ''
+  host.dispatchSupport = () => ({ available: true })
+  host.prepareWorkerToolFace = (sessionId, allowedTools) => {
+    prepared.push({ sessionId, allowedTools: allowedTools.slice() })
+    return true
+  }
+  host.forgetWorkerToolFace = (sessionId) => forgotten.push(sessionId)
+  host.createDispatchSession = async (request) => {
+    createdWith = request
+    return request.sessionId
+  }
+  host.promptDispatchSession = async (request) => {
+    promptText = request.text
+  }
+  host.readDispatchEvents = async () => ({ status: 'events', events: [] })
+  const response = await call(ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.toolFaceApplied, true)
+  assert.equal(prepared.length, 1)
+  assert.match(prepared[0].sessionId, /^session-/)
+  assert.deepEqual(prepared[0].allowedTools, ['read'])
+  assert.deepEqual(createdWith, { sessionId: prepared[0].sessionId })
+  assert.ok(promptText.includes('只使用以下工具'), promptText)
+  assert.ok(promptText.includes('受限包'), promptText)
+  assert.deepEqual(forgotten, [])
+  // 真实 store 文件：dispatch.json kind=pack，GET state 读回并派生 running
+  const persisted = await readJson(join(home, 'dispatch.json'))
+  assert.equal(persisted.kind, 'pack')
+  assert.equal(persisted.sessionId, prepared[0].sessionId)
+  const state = await call(ROUTE_PATHS.state, {})
+  assert.equal(state.status, 200)
+  assert.equal(state.json.dispatch.kind, 'pack')
+  assert.equal(state.json.dispatch.state, 'running')
 })

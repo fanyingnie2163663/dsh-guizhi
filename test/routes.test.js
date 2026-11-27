@@ -1,11 +1,12 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROUTE_PATHS, TOOL_SPECS, createRoutes, registerTools } from '../lib/routes.js'
 import { buildPack } from '../lib/packs.js'
 import { schemas } from '../lib/schemas.js'
+import { buildPackSkill } from '../lib/skillpack.js'
 
 /**
  * Route-layer tests (Task 7). They exercise lib/routes.js with fake dependencies
@@ -83,29 +84,42 @@ function sampleProposals() {
   }
 }
 
-/** In-memory store with the five-method shape createStore provides. */
+/**
+ * In-memory store with the five-method shape createStore provides.
+ *
+ * `errors` injects read failures, `writeErrors` injects write failures (the
+ * attempt is still recorded in `calls`), and `calls` records the order of
+ * snapshot/write calls so a test can pin the snapshot-before-write boundary.
+ */
 function createFakeStore(initial = {}) {
   const docs = new Map()
   for (const [name, value] of Object.entries(initial)) docs.set(name, cloneJson(value))
   const writes = []
   const errors = {}
+  const writeErrors = {}
   const snapshots = []
+  const calls = []
   let sequence = 0
   const store = {
     docs,
     writes,
     errors,
+    writeErrors,
     snapshots,
+    calls,
     async read(name) {
       if (typeof errors[name] === 'string') return { value: null, error: errors[name] }
       if (!docs.has(name)) return { value: null, error: null }
       return { value: cloneJson(docs.get(name)), error: null }
     },
     async write(name, value) {
+      calls.push({ type: 'write', name })
+      if (typeof writeErrors[name] === 'string') throw new Error(writeErrors[name])
       writes.push({ name, value: cloneJson(value) })
       docs.set(name, cloneJson(value))
     },
     async snapshot(tag = 'manual') {
+      calls.push({ type: 'snapshot', tag })
       sequence += 1
       const snapshot = { id: 'snap-' + String(sequence).padStart(3, '0'), tag, createdAt: NOW_ISO, files: [] }
       snapshots.push(snapshot)
@@ -152,10 +166,13 @@ function createFakeHost(options = {}) {
   const dispatchSupport = options.dispatchSupport ?? { available: true }
   const dispatchSessionId = options.dispatchSessionId ?? 'background-session'
   const dispatchState = { sessionsCreated: 0, prompts: 0 }
+  /** S3 tool-face spy: planned allowlists, forgotten ids and create() arguments. */
+  const toolFace = { prepared: [], forgotten: [], createdArgs: [] }
   const host = {
     counts,
     dispatchCalls,
     dispatchState,
+    toolFace,
     sessionEventSince,
     get warnings() {
       return warnings.slice()
@@ -177,9 +194,21 @@ function createFakeHost(options = {}) {
       return cloneJson(skills)
     },
     dispatchSupport: () => cloneJson(dispatchSupport),
-    async createDispatchSession() {
+    async createDispatchSession(request) {
+      toolFace.createdArgs.push(cloneJson(request))
       dispatchState.sessionsCreated += 1
       if (typeof options.createDispatchError === 'string') throw new Error(options.createDispatchError)
+      // S3: a host that honours the pre-generated id proves the tool face was
+      // attached to the Session that will actually run the worker.
+      if (
+        options.adoptPlannedSessionId === true &&
+        request !== null &&
+        typeof request === 'object' &&
+        typeof request.sessionId === 'string' &&
+        request.sessionId !== ''
+      ) {
+        return request.sessionId
+      }
       return dispatchSessionId
     },
     async promptDispatchSession(request) {
@@ -210,6 +239,14 @@ function createFakeHost(options = {}) {
       })()
     },
   }
+  if (options.omitToolFace === true) return host
+  host.prepareWorkerToolFace = (sessionId, allowedTools) => {
+    toolFace.prepared.push({ sessionId, allowedTools: cloneJson(allowedTools) })
+    return options.toolFaceUnavailable !== true
+  }
+  host.forgetWorkerToolFace = (sessionId) => {
+    toolFace.forgotten.push(sessionId)
+  }
   return host
 }
 
@@ -219,6 +256,7 @@ function makeDeps(options = {}) {
     host: options.host ?? createFakeHost(options.hostOptions ?? {}),
     store: options.store ?? createFakeStore(options.docs ?? {}),
     ...(options.home !== undefined ? { home: options.home } : {}),
+    ...(options.skillsHome !== undefined ? { skillsHome: options.skillsHome } : {}),
     now: () => new Date(NOW),
     ...(options.catalog ? { catalog: options.catalog } : {}),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
@@ -280,12 +318,36 @@ test('GET state：返回 scan/map/proposals/selections 与 warnings；缺失文�
   })
   const response = await call(makeDeps({ store }), ROUTE_PATHS.state, {})
   assert.equal(response.status, 200)
-  assert.deepEqual(Object.keys(response.json).sort(), ['dispatch', 'dispatchSupported', 'map', 'proposals', 'scan', 'selections', 'sources', 'warnings'])
+  assert.deepEqual(Object.keys(response.json).sort(), ['advice', 'dispatch', 'dispatchSupported', 'map', 'proposals', 'scan', 'selections', 'sources', 'warnings'])
   assert.deepEqual(response.json.scan, sampleScan())
   assert.deepEqual(response.json.map, sampleMap())
   assert.deepEqual(response.json.proposals, sampleProposals())
   assert.deepEqual(response.json.selections, { selected: ['dev'], custom: '一句话' })
   assert.deepEqual(response.json.warnings, [])
+  assert.deepEqual(response.json.advice, { items: [] }, '没有冗余能力点时 advice 为空')
+})
+
+test('GET state：advice 是独立视图（地图 suggestion 优先，冗余能力点自动精简建议）', async () => {
+  const map = sampleMap()
+  map.stages[1].capabilities = [
+    { id: 'web-design', title: '网页视觉', status: 'redundant', evidence: { source: 'skill', skills: ['web-artifact-designer', 'frontend-design'] }, suggestion: '保留 frontend-design。' },
+    { id: 'notes', title: '笔记', status: 'redundant', evidence: { source: 'skill', skills: ['note-skill-a', 'note-skill-b'] } },
+    { id: 'read-code', title: '读代码', status: 'have', evidence: { source: 'scan', tools: ['read'] } },
+  ]
+  const store = createFakeStore({ scan: sampleScan(), map })
+  const response = await call(makeDeps({ store }), ROUTE_PATHS.state, {})
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.json.map, map, 'advice 是视图，不得写回地图')
+  const items = response.json.advice.items
+  assert.equal(items.length, 2, '只有冗余能力点缺省时才自动生成；have 不生成')
+  const byId = new Map(items.map((item) => [item.capabilityId, item]))
+  assert.equal(byId.get('web-design').source, 'map')
+  assert.equal(byId.get('web-design').text, '保留 frontend-design。')
+  assert.equal(byId.get('notes').source, 'derived')
+  assert.equal(byId.get('notes').title, '精简建议')
+  assert.match(byId.get('notes').text, /note-skill-a、note-skill-b/)
+  assert.match(byId.get('notes').hint, /不会自动/)
+  assert.deepEqual(store.writes, [], 'GET state 不写任何状态')
 })
 
 test('GET state：缺失的状态文档返回 null（首次使用不是错误）', async () => {
@@ -542,7 +604,7 @@ test('POST pack：生成 kind=pack 提案写入 proposals，不写 packs 文件�
     id: pack.id,
     kind: 'pack',
     title: '研发包',
-    effect: '导出能力包 研发包（1 个工具 / 1 个技能）',
+    effect: '导出装配清单 研发包（1 个工具 / 1 个技能）；应用时可选择安装工作流技能 stow-' + pack.id + '（默认不安装）',
     evidence: { source: 'map', refs: ['understand'] },
   })
   const writes = store.writes.filter((write) => write.name === 'proposals')
@@ -693,6 +755,55 @@ test('POST gaps：目录加载失败 fail-open（items [] + error 字符串）�
   const written = store.writes.filter((write) => write.name === 'proposals')
   assert.equal(written.length, 1)
   assert.deepEqual(written[0].value.items, [])
+})
+
+test('POST gaps：合并时保留非 catalog 提案（pack），catalog 提案整体替换且按 id 去重', async () => {
+  const store = createFakeStore({ scan: sampleScan(), map: sampleMap(), proposals: sampleProposals() })
+  const catalog = async () => ({ entries: [{ name: 'dsh-websearch', title: '联网搜索', description: 'web_search 工具' }], stale: false, error: null })
+  const response = await call(makeDeps({ store, catalog }), ROUTE_PATHS.gaps, {})
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  const items = response.json.items
+  assert.ok(items.some((item) => item.id === 'pack-dev' && item.kind === 'pack'), '非 catalog 提案（pack）必须保留：' + JSON.stringify(items))
+  const generated = items.filter((item) => item.evidence.source === 'catalog')
+  assert.equal(generated.length, 1, '新 catalog 提案必须写入')
+  assert.equal(items.some((item) => item.id === 'install-web'), false, '旧 catalog 提案被本轮结果整体替换')
+  const written = store.writes.filter((write) => write.name === 'proposals')
+  assert.equal(written.length, 1)
+  assert.deepEqual(written[0].value.items, items)
+  assert.deepEqual(schemas.proposals.validate(written[0].value), { ok: true, errors: [] })
+
+  // 按 id 去重：同 id 时新生成的 catalog 条目优先，旧条目不得覆盖它
+  const generatedId = generated[0].id
+  const colliding = createFakeStore({
+    scan: sampleScan(),
+    map: sampleMap(),
+    proposals: {
+      items: [{ id: generatedId, kind: 'pack', title: '同名旧提案', effect: '旧', evidence: { source: 'map', refs: [] } }],
+      generatedAt: NOW_ISO,
+    },
+  })
+  const second = await call(makeDeps({ store: colliding, catalog }), ROUTE_PATHS.gaps, {})
+  assert.equal(second.status, 200, JSON.stringify(second.json))
+  const secondIds = second.json.items.map((item) => item.id)
+  assert.equal(secondIds.filter((id) => id === generatedId).length, 1, '同 id 只保留一条')
+  assert.equal(second.json.items.find((item) => item.id === generatedId).evidence.source, 'catalog', '新条目优先')
+})
+
+test('POST gaps：目录不可达时仍保留既有 pack 提案（fail-open 且不丢非 catalog 条目）', async () => {
+  const store = createFakeStore({ scan: sampleScan(), map: sampleMap(), proposals: sampleProposals() })
+  const catalog = async () => ({ entries: [], stale: true, error: '目录不可达' })
+  const response = await call(makeDeps({ store, catalog }), ROUTE_PATHS.gaps, {})
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.error, '目录不可达')
+  assert.deepEqual(response.json.items.map((item) => item.id), ['pack-dev'], 'pack 提案保留，旧 catalog 提案被本轮空结果替换')
+})
+
+test('POST gaps：现有 proposals 文档损坏时 400 PROPOSALS_INVALID，不覆盖原文档（合并不丢提案）', async () => {
+  const store = createFakeStore({ scan: sampleScan(), map: sampleMap(), proposals: { items: 'nope', generatedAt: NOW_ISO } })
+  const response = await call(makeDeps({ store, catalog: async () => ({ entries: [], stale: false, error: null }) }), ROUTE_PATHS.gaps, {})
+  assertFailure(response, 400, /提案/)
+  assert.equal(response.json.code, 'PROPOSALS_INVALID')
+  assert.deepEqual(store.writes, [], '坏文档不得被覆盖')
 })
 
 test('POST gaps：没有地图返回 400 NO_MAP 且不写 proposals（D7 追加语义）', async () => {
@@ -856,11 +967,12 @@ const EXPECTED_TOOL_NAMES = [
   'stow_apply',
   'stow_rollback',
   'stow_draft',
+  'stow_dispatch',
 ]
 
-test('registerTools：返回 9 个 stow_* 工具，名字逐字一致且 handler 是函数', () => {
+test('registerTools：返回 10 个 stow_* 工具，名字逐字一致且 handler 是函数', () => {
   const tools = registerTools({ deps: makeDeps() })
-  assert.equal(tools.length, 9)
+  assert.equal(tools.length, 10)
   assert.deepEqual(tools.map((tool) => tool.name).sort(), EXPECTED_TOOL_NAMES.slice().sort())
   for (const tool of tools) assert.equal(typeof tool.handler, 'function', tool.name)
 })
@@ -1007,7 +1119,7 @@ function collectDslViolations(value, path, violations, context = {}) {
 
 test('TOOL_SPECS 参数符合宿主 defineTool DSL：required 仅 true、object 显式 additionalProperties、type 白名单', () => {
   assert.ok(Array.isArray(TOOL_SPECS), 'TOOL_SPECS 必须导出为数组供接线与回归测试使用')
-  assert.equal(TOOL_SPECS.length, 9)
+  assert.equal(TOOL_SPECS.length, 10)
   const violations = []
   for (const spec of TOOL_SPECS) {
     const parameters = spec.parameters
@@ -1034,7 +1146,7 @@ test('TOOL_SPECS 回归：stow_preview.ids 省略 required（可选）、stow_ma
   assert.ok(mapParam.description.length > 0)
 })
 
-test('TOOL_SPECS 仍能经 registerTools 注册出 9 个工具（DSL 修复不改变工具面）', () => {
+test('TOOL_SPECS 仍能经 registerTools 注册出 10 个工具（DSL 修复不改变工具面）', () => {
   const tools = registerTools({ deps: makeDeps() })
   assert.deepEqual(tools.map((tool) => tool.name).sort(), EXPECTED_TOOL_NAMES.slice().sort())
 })
@@ -1205,31 +1317,94 @@ test('POST pipeline：无工作流时 400 NO_MAP，不写提案/能力包', asyn
   assertFailure(response, 400, /工作流|NO_MAP/)
   assert.equal(response.json.code, 'NO_MAP')
   assert.deepEqual(store.writes.filter((write) => write.name === 'proposals'), [])
+  assert.deepEqual(store.snapshots, [], '无地图时在快照前就失败，不留孤立快照')
   await assert.rejects(stat(join(home, 'packs')), { code: 'ENOENT' })
 })
 
-test('POST pipeline：扫描→查缺补漏→能力包→预览→应用 pack 一步完成并可回滚', async () => {
+test('POST pipeline：先快照再写，扫描→查缺补漏→能力包→预览即止（不自动 apply、不导出文件）', async () => {
   const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pipeline-'))
   cleanup.push(home)
   const store = createFakeStore({ map: sampleMap(), scan: sampleScan() })
   const deps = makeDeps({ store, home, catalog: async () => ({ entries: [], stale: false, error: null }) })
   const response = await call(deps, ROUTE_PATHS.pipeline, {})
   assert.equal(response.status, 200, JSON.stringify(response.json))
-  assert.deepEqual(response.json.steps.map((step) => step.id), ['scan', 'gaps', 'pack', 'preview', 'apply'])
+  assert.deepEqual(
+    Object.keys(response.json).sort(),
+    ['gaps', 'pack', 'preview', 'scan', 'snapshotId', 'steps', 'warnings'],
+    '响应契约：无 apply 字段，带 snapshotId',
+  )
+  assert.deepEqual(response.json.steps.map((step) => step.id), ['scan', 'gaps', 'pack', 'preview'])
+  assert.deepEqual(store.calls[0], { type: 'snapshot', tag: 'before-pipeline' }, '快照必须在任何状态写之前')
+  assert.equal(store.snapshots.length, 1)
+  assert.equal(response.json.snapshotId, store.snapshots[0].id)
   assert.ok(response.json.pack.id, '能力包 id 必须存在')
   assert.equal(response.json.preview.itemCount, 1)
-  assert.equal(response.json.apply.applied.length, 1)
-  assert.ok(response.json.apply.applied.length === 1)
-  assert.ok(typeof response.json.apply.snapshotId === 'string' && response.json.apply.snapshotId !== '')
-  const file = await stat(join(home, 'packs', response.json.pack.id + '.json'))
-  assert.ok(file.isFile(), '一键整理必须导出能力包文件')
+  assert.equal(Object.hasOwn(response.json, 'apply'), false, 'pipeline 不再自动 apply')
   assert.equal(store.writes.some((write) => write.name === 'scan'), true)
   assert.equal(store.writes.some((write) => write.name === 'packs'), true)
+  await assertNoPacksExport(home)
   const stored = (await store.read('proposals')).value
   assert.equal(stored.items.some((item) => item.kind === 'pack'), true)
 })
 
-test('POST pipeline：目录不可达时 fail-open，仍生成并应用能力包', async () => {
+test('POST pipeline：地图无工具/技能可派生时 pack 步骤 warn 并追加可读告警（预览仍只读）', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pipeline-'))
+  cleanup.push(home)
+  const map = {
+    scenarios: ['dev'],
+    stages: [
+      {
+        id: 'understand',
+        title: '理解需求',
+        capabilities: [{ id: 'read-code', title: '读代码', status: 'have', evidence: { source: 'scan' } }],
+      },
+    ],
+  }
+  const store = createFakeStore({ map, scan: sampleScan() })
+  const response = await call(
+    makeDeps({ store, home, catalog: async () => ({ entries: [], stale: false, error: null }) }),
+    ROUTE_PATHS.pipeline,
+    {},
+  )
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  const packStep = response.json.steps.find((step) => step.id === 'pack')
+  assert.equal(packStep.status, 'warn', '空包不能报 ok')
+  assert.deepEqual(response.json.pack.tools, [])
+  assert.deepEqual(response.json.pack.skills, [])
+  assert.ok(
+    response.json.warnings.some((message) => /没有可派生的工具或技能/.test(message) && /装配清单为空/.test(message)),
+    JSON.stringify(response.json.warnings),
+  )
+  assert.equal(response.json.preview.itemCount, 1, '空包仍只进入预览')
+  await assertNoPacksExport(home)
+})
+
+test('POST pipeline：快照失败返回 500 且不写任何状态', async () => {
+  const store = createFakeStore({ map: sampleMap(), scan: sampleScan() })
+  store.snapshot = async () => {
+    throw new Error('磁盘空间不足')
+  }
+  const response = await call(makeDeps({ store }), ROUTE_PATHS.pipeline, {})
+  assertFailure(response, 500, /快照/)
+  assert.equal(response.json.code, 'SNAPSHOT_FAILED')
+  assert.deepEqual(store.writes, [], '快照失败不得写状态')
+})
+
+test('POST pipeline：快照之后任一步失败 → 500 带 snapshotId，进度标记 failed', async () => {
+  const store = createFakeStore({ map: sampleMap(), scan: sampleScan() })
+  store.writeErrors.packs = '磁盘已满'
+  const deps = makeDeps({ store, catalog: async () => ({ entries: [], stale: false, error: null }) })
+  const response = await call(deps, ROUTE_PATHS.pipeline, {})
+  assertFailure(response, 500, /packs|磁盘已满/)
+  assert.equal(response.json.snapshotId, store.snapshots[0].id, '失败响应必须带可回滚的 snapshotId')
+  assert.equal(store.snapshots[0].tag, 'before-pipeline')
+  assert.deepEqual(store.writes.map((write) => write.name), ['scan', 'proposals'], '失败前的写都发生在快照之后')
+  const progress = await call(deps, ROUTE_PATHS.pipelineStatus, {})
+  assert.equal(progress.json.status, 'failed')
+  assert.match(progress.json.error, /磁盘已满/)
+})
+
+test('POST pipeline：目录不可达时 fail-open（gaps error + warn），不自动应用', async () => {
   const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pipeline-'))
   cleanup.push(home)
   const store = createFakeStore({ map: sampleMap(), scan: sampleScan() })
@@ -1237,8 +1412,9 @@ test('POST pipeline：目录不可达时 fail-open，仍生成并应用能力包
   const response = await call(makeDeps({ store, home, catalog }), ROUTE_PATHS.pipeline, {})
   assert.equal(response.status, 200)
   assert.equal(response.json.gaps.error, '目录不可达')
-  assert.equal(response.json.apply.applied.length, 1)
-  await stat(join(home, 'packs', response.json.pack.id + '.json'))
+  assert.equal(response.json.steps.find((step) => step.id === 'gaps').status, 'warn')
+  assert.equal(Object.hasOwn(response.json, 'apply'), false)
+  await assertNoPacksExport(home)
 })
 
 test('GET pipeline/status：从未运行时返回 idle', async () => {
@@ -1271,8 +1447,9 @@ test('GET pipeline/status：运行中报告当前步骤与百分比，完成后 
   const finished = await call(deps, ROUTE_PATHS.pipelineStatus, {})
   assert.equal(finished.json.status, 'done')
   assert.equal(finished.json.percent, 100)
-  assert.equal(finished.json.steps.length, 5)
+  assert.equal(finished.json.steps.length, 4)
   assert.equal(finished.json.steps[0].id, 'scan')
+  assert.equal(finished.json.steps[finished.json.steps.length - 1].id, 'preview', '一键整理到预览即止')
 })
 
 // ---------------------------------------------------------------------------
@@ -1315,6 +1492,417 @@ test('POST gaps：未配置目录源时 fail-open，返回可操作的目录源�
   assert.match(response.json.error, /工作流/)
 })
 
+/* ------------------------------------------------- S2 技能安装路由（SKILL.md） */
 
+/** 一份真实 pack + 与之对应的 proposals / packs 文档（/apply 按 pack id 查存储包）。 */
+function samplePackState() {
+  const pack = buildPack({ map: sampleMap(), stageIds: ['understand'], title: '研发包' })
+  const proposal = {
+    id: pack.id,
+    kind: 'pack',
+    title: '研发包',
+    effect: '导出装配清单 研发包（1 个工具 / 1 个技能）；应用时可选择安装工作流技能 stow-' + pack.id + '（默认不安装）',
+    evidence: { source: 'map', refs: ['understand'] },
+  }
+  return { pack, proposal, proposals: { items: [proposal], generatedAt: NOW_ISO }, packs: { packs: [pack] } }
+}
 
+/**
+ * 预置一份可回滚的 apply 结果：fake store 的快照 id 固定为 snap-001，而 meta.json
+ * 由真实 store 写、fake store 不写，所以这里手工补上，再让 restore 成功。
+ */
+async function seedAppliedSkill({ oldBytes } = {}) {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-skill-'))
+  cleanup.push(home)
+  const skillsHome = join(home, 'dsh', 'skills')
+  const state = samplePackState()
+  const expected = buildPackSkill(state.pack)
+  const target = join(skillsHome, expected.name, 'SKILL.md')
+  if (oldBytes !== undefined) {
+    await mkdir(join(skillsHome, expected.name), { recursive: true })
+    await writeFile(target, oldBytes)
+  }
+  const store = createFakeStore({ proposals: state.proposals, packs: state.packs })
+  const deps = makeDeps({ store, home, skillsHome })
+  const applied = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill: true })
+  assert.equal(applied.status, 200, JSON.stringify(applied.json))
+  await mkdir(join(home, 'snapshots', 'snap-001'), { recursive: true })
+  await writeFile(
+    join(home, 'snapshots', 'snap-001', 'meta.json'),
+    JSON.stringify({ id: 'snap-001', tag: 'before-apply', createdAt: NOW_ISO, files: [] }),
+  )
+  store.restore = async () => ({ restored: true })
+  return { home, skillsHome, store, deps, state, expected, target, applied }
+}
+
+test('POST pack（S2）：非空清单 effect 附安装工作流技能 stow-<id>', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
+  cleanup.push(home)
+  const store = createFakeStore({ map: sampleMap(), proposals: sampleProposals() })
+  const response = await call(makeDeps({ store, home }), ROUTE_PATHS.pack, { stageIds: ['understand'], title: '研发包' })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  const { pack, proposal } = response.json
+  assert.equal(proposal.effect, '导出装配清单 研发包（1 个工具 / 1 个技能）；应用时可选择安装工作流技能 stow-' + pack.id + '（默认不安装）')
+})
+
+test('POST pack（S2）：空清单 effect 写明应用时跳过技能安装', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-pack-'))
+  cleanup.push(home)
+  const map = { scenarios: ['dev'], stages: [{ id: 'idle', title: '空闲', capabilities: [] }] }
+  const store = createFakeStore({ map })
+  const response = await call(makeDeps({ store, home }), ROUTE_PATHS.pack, { stageIds: ['idle'], title: '空包' })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.deepEqual(response.json.pack.tools, [])
+  assert.deepEqual(response.json.pack.skills, [])
+  assert.equal(response.json.proposal.effect, '导出装配清单 空包（0 个工具 / 0 个技能）；清单为空，应用时跳过技能安装')
+})
+
+test('POST apply/rollback（S2）：skillsHome 透传——响应含 skills，rollback 删除新建技能', async () => {
+  const { deps, expected, target, applied, skillsHome } = await seedAppliedSkill()
+  assert.deepEqual(applied.json.skills, [{ name: expected.name, path: target }])
+  assert.equal(await readFile(target, 'utf8'), expected.markdown)
+  const rollbackResponse = await call(deps, ROUTE_PATHS.rollback, { snapshotId: applied.json.snapshotId })
+  assert.equal(rollbackResponse.status, 200, JSON.stringify(rollbackResponse.json))
+  assert.deepEqual(rollbackResponse.json, { restored: true })
+  await assert.rejects(stat(target), { code: 'ENOENT' })
+  await assert.rejects(stat(join(skillsHome, expected.name)), { code: 'ENOENT' })
+})
+
+test('POST apply/rollback（S2）：旧 SKILL.md 先备份，rollback 恢复旧字节', async () => {
+  const oldBytes = Buffer.from('# 旧技能\n旧内容\n', 'utf8')
+  const { deps, expected, target, applied } = await seedAppliedSkill({ oldBytes })
+  assert.equal(await readFile(target, 'utf8'), expected.markdown, 'apply 覆盖旧技能')
+  const rollbackResponse = await call(deps, ROUTE_PATHS.rollback, { snapshotId: applied.json.snapshotId })
+  assert.equal(rollbackResponse.status, 200, JSON.stringify(rollbackResponse.json))
+  assert.deepEqual(await readFile(target), oldBytes, 'rollback 恢复旧技能字节')
+})
+
+test('POST rollback（S2）：技能记账损坏映射为 400 LEDGER_CORRUPT，不删技能文件', async () => {
+  const { home, deps, target, applied } = await seedAppliedSkill()
+  await writeFile(join(home, 'snapshots', applied.json.snapshotId, 'skills-created.json'), '{ broken')
+  const response = await call(deps, ROUTE_PATHS.rollback, { snapshotId: applied.json.snapshotId })
+  assertFailure(response, 400, /记账|技能/)
+  assert.equal(response.json.code, 'LEDGER_CORRUPT')
+  assert.equal((await stat(target)).isFile(), true)
+})
+
+test('POST apply（S2）：installSkill=true 时非法 skillsHome 映射为 400 INVALID_INPUT，不建快照', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-skill-'))
+  cleanup.push(home)
+  const state = samplePackState()
+  const store = createFakeStore({ proposals: state.proposals, packs: state.packs })
+  for (const skillsHome of ['', 42]) {
+    const deps = makeDeps({ store, home, skillsHome })
+    const response = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill: true })
+    assertFailure(response, 400, /skillsHome/)
+    assert.equal(response.json.code, 'INVALID_INPUT')
+  }
+  assert.deepEqual(store.snapshots, [])
+})
+
+/* ------------------------------------------------- S2 加固：installSkill 显式 opt-in */
+
+test('POST apply：默认不安装技能——即使 deps 提供 skillsHome，也要 installSkill=true 才透传', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-optin-'))
+  cleanup.push(home)
+  const state = samplePackState()
+  const store = createFakeStore({ proposals: state.proposals, packs: state.packs })
+  const deps = makeDeps({ store, home, skillsHome: join(home, 'skills') })
+  const expected = buildPackSkill(state.pack)
+  const skillPath = join(home, 'skills', expected.name, 'SKILL.md')
+  const defaultApply = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id] })
+  assert.equal(defaultApply.status, 200, JSON.stringify(defaultApply.json))
+  assert.deepEqual(defaultApply.json.skills, [])
+  await assert.rejects(stat(skillPath), { code: 'ENOENT' })
+  // 显式 installSkill:false 与缺省一致
+  const explicitOff = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill: false })
+  assert.equal(explicitOff.status, 200, JSON.stringify(explicitOff.json))
+  assert.deepEqual(explicitOff.json.skills, [])
+  await assert.rejects(stat(skillPath), { code: 'ENOENT' })
+  // opt-in 才安装
+  const optIn = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill: true })
+  assert.equal(optIn.status, 200, JSON.stringify(optIn.json))
+  assert.deepEqual(optIn.json.skills, [{ name: expected.name, path: skillPath }])
+  assert.equal(await readFile(skillPath, 'utf8'), expected.markdown)
+})
+
+test('POST apply：installSkill 非布尔值是 400 INSTALL_SKILL_INVALID，不建快照', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-flag-'))
+  cleanup.push(home)
+  const state = samplePackState()
+  const store = createFakeStore({ proposals: state.proposals, packs: state.packs })
+  for (const installSkill of ['true', 1, null, {}, []]) {
+    const response = await call(makeDeps({ store, home }), ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill })
+    assertFailure(response, 400, /installSkill/)
+    assert.equal(response.json.code, 'INSTALL_SKILL_INVALID', JSON.stringify(installSkill))
+  }
+  assert.deepEqual(store.snapshots, [])
+})
+
+test('POST apply：installSkill=true 但 skillsHome 不可用时 200 + warning，装配清单仍导出', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-root-'))
+  cleanup.push(home)
+  const state = samplePackState()
+  const store = createFakeStore({ proposals: state.proposals, packs: state.packs })
+  const asFile = join(home, 'skills-is-file')
+  await writeFile(asFile, 'not a directory')
+  const deps = makeDeps({ store, home, skillsHome: asFile })
+  const response = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill: true })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.deepEqual(response.json.skills, [])
+  assert.match(response.json.warnings.join('\n'), /技能安装已跳过/)
+  assert.equal((await stat(join(home, 'packs', state.pack.id + '.json'))).isFile(), true)
+})
+
+/* ------------------------------------------------- pack 感知派单草稿 */
+
+test('POST draft：packId 命中时按装配清单生成结构化父→子派单载荷，不读 scan', async () => {
+  const pack = buildPack({ map: sampleMap(), stageIds: ['understand'], title: '研发包' })
+  const store = createFakeStore({ packs: { packs: [pack] }, scan: sampleScan() })
+  const readNames = []
+  const originalRead = store.read.bind(store)
+  store.read = async (name) => {
+    readNames.push(name)
+    return originalRead(name)
+  }
+  const response = await call(makeDeps({ store }), ROUTE_PATHS.draft, { kind: 'dispatch', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  const text = response.json.text
+  assert.equal(typeof text, 'string')
+  for (const phrase of [
+    '研发包',
+    '阶段与能力点',
+    '理解需求',
+    '读代码',
+    'read',
+    'brainstorming',
+    '执行步骤',
+    '验收清单',
+    '只使用上述工具/技能；这是软约束，工具面未被硬限制。',
+  ]) {
+    assert.ok(text.includes(phrase), '草稿缺少「' + phrase + '」：\n' + text)
+  }
+  assert.doesNotMatch(text, /这个活只需要/, '给 packId 时不得退回 scan 草稿')
+  assert.equal(readNames.includes('scan'), false, '给 packId 时不得读取 scan 全量工具')
+})
+
+test('POST draft：packId 命中空清单时仍返回结构化草稿并写明没有工具/技能', async () => {
+  const map = { scenarios: ['dev'], stages: [{ id: 'idle', title: '空闲', capabilities: [] }] }
+  const pack = buildPack({ map, stageIds: ['idle'], title: '空包' })
+  const store = createFakeStore({ packs: { packs: [pack] } })
+  const response = await call(makeDeps({ store }), ROUTE_PATHS.draft, { kind: 'dispatch', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.match(response.json.text, /空包/)
+  assert.match(response.json.text, /本装配清单没有工具/)
+  assert.match(response.json.text, /本装配清单没有技能/)
+  assert.match(response.json.text, /只使用上述工具\/技能；这是软约束，工具面未被硬限制。/)
+})
+
+test('POST draft：packId 不存在是 400 PACK_NOT_FOUND；非字符串是 400 PACK_ID_INVALID', async () => {
+  const store = createFakeStore({ packs: { packs: [] } })
+  const missing = await call(makeDeps({ store }), ROUTE_PATHS.draft, { kind: 'dispatch', packId: 'pack-missing' })
+  assertFailure(missing, 400, /装配清单|pack/)
+  assert.equal(missing.json.code, 'PACK_NOT_FOUND')
+  for (const packId of [42, null, '', '  ', {}]) {
+    const response = await call(makeDeps({ store }), ROUTE_PATHS.draft, { kind: 'dispatch', packId })
+    assertFailure(response, 400, /packId/)
+    assert.equal(response.json.code, 'PACK_ID_INVALID', JSON.stringify(packId))
+  }
+  // 还没有任何装配清单状态时同样 400 PACK_NOT_FOUND
+  const empty = await call(makeDeps(), ROUTE_PATHS.draft, { kind: 'dispatch', packId: 'pack-missing' })
+  assertFailure(empty, 400, /装配清单|pack/)
+  assert.equal(empty.json.code, 'PACK_NOT_FOUND')
+})
+
+test('TOOL_SPECS 回归（S2 加固）：stow_apply.installSkill 可选 boolean、stow_draft.packId 可选 string、描述与 opt-in 一致', () => {
+  const byName = new Map(TOOL_SPECS.map((spec) => [spec.name, spec]))
+  const installSkill = byName.get('stow_apply').parameters.installSkill
+  assert.equal(installSkill.type, 'boolean')
+  assert.equal(Object.hasOwn(installSkill, 'required'), false, '可选参数必须省略 required')
+  assert.match(byName.get('stow_apply').description, /默认只导出装配清单/)
+  assert.match(byName.get('stow_apply').description, /installSkill=true/)
+  assert.match(byName.get('stow_apply').description, /skills/)
+  assert.match(byName.get('stow_rollback').description, /技能/)
+  const packId = byName.get('stow_draft').parameters.packId
+  assert.equal(packId.type, 'string')
+  assert.equal(Object.hasOwn(packId, 'required'), false, '可选参数必须省略 required')
+  assert.match(byName.get('stow_draft').description, /packId/)
+})
+
+/* ------------------------------------------------- S3：pack 受限 worker 派发 */
+
+/** 一份真实 pack + 对应的 packs 存储文档（pack dispatch 用）。 */
+function packDispatchFixture() {
+  const pack = buildPack({ map: sampleMap(), stageIds: ['understand'], title: '研发包' })
+  return { pack, store: createFakeStore({ packs: { packs: [pack] } }) }
+}
+
+test('POST dispatch：kind="pack" 用预生成 session id 创建受限 worker 并记录 toolFaceApplied', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.dispatch.kind, 'pack')
+  assert.equal(response.json.dispatch.state, 'running')
+  assert.equal(response.json.toolFaceApplied, true)
+  assert.equal(response.json.toolFace.prepared, true)
+  assert.deepEqual(response.json.toolFace.requested, ['read'])
+  assert.deepEqual(response.json.warnings, [])
+  // 先 plan、再 create({sessionId})、再用同一 id 投递
+  assert.equal(deps.host.toolFace.prepared.length, 1)
+  const planned = deps.host.toolFace.prepared[0]
+  assert.match(planned.sessionId, /^session-/)
+  assert.deepEqual(planned.allowedTools, ['read'], 'pack tools 生成 allowlist')
+  assert.deepEqual(deps.host.toolFace.createdArgs, [{ sessionId: planned.sessionId }])
+  assert.equal(deps.host.dispatchCalls.length, 1)
+  assert.equal(deps.host.dispatchCalls[0].sessionId, planned.sessionId)
+  const promptText = deps.host.dispatchCalls[0].text
+  assert.ok(promptText.includes('只使用以下工具'), promptText)
+  assert.ok(promptText.includes('研发包'), promptText)
+  assert.ok(promptText.includes('软约束'), promptText)
+  assert.ok(promptText.includes('若清单外工具仍可见'), promptText)
+  assert.ok(promptText.includes('验收清单'), promptText)
+  assert.equal(promptText.includes('本机路径'), false)
+  // 持久化 dispatch 记录 kind=pack
+  const written = store.docs.get('dispatch')
+  assert.equal(written.kind, 'pack')
+  assert.equal(written.sessionId, planned.sessionId)
+  assert.equal(written.state, 'running')
+})
+
+test('POST dispatch：kind="pack" 缺 packId / 非字符串 → 400 PACK_ID_INVALID，不建会话', async () => {
+  const { store } = packDispatchFixture()
+  for (const payload of [{ kind: 'pack' }, { kind: 'pack', packId: 42 }, { kind: 'pack', packId: '' }, { kind: 'pack', packId: '  ' }, { kind: 'pack', packId: null }]) {
+    const deps = makeDeps({ store })
+    const response = await call(deps, ROUTE_PATHS.dispatch, payload)
+    assertFailure(response, 400, /packId/)
+    assert.equal(response.json.code, 'PACK_ID_INVALID', JSON.stringify(payload))
+    assert.equal(deps.host.dispatchState.sessionsCreated, 0)
+    assert.equal(deps.host.dispatchCalls.length, 0)
+  }
+})
+
+test('POST dispatch：kind="pack" 装配清单不存在 → 400 PACK_NOT_FOUND；状态损坏 → 400 PACKS_INVALID', async () => {
+  const missing = await call(makeDeps({ store: createFakeStore({ packs: { packs: [] } }) }), ROUTE_PATHS.dispatch, { kind: 'pack', packId: 'pack-missing' })
+  assertFailure(missing, 400, /装配清单|pack/)
+  assert.equal(missing.json.code, 'PACK_NOT_FOUND')
+  const empty = await call(makeDeps(), ROUTE_PATHS.dispatch, { kind: 'pack', packId: 'pack-missing' })
+  assertFailure(empty, 400, /装配清单|pack/)
+  assert.equal(empty.json.code, 'PACK_NOT_FOUND')
+  const brokenStore = createFakeStore()
+  brokenStore.errors.packs = 'packs.json 损坏'
+  const broken = await call(makeDeps({ store: brokenStore }), ROUTE_PATHS.dispatch, { kind: 'pack', packId: 'pack-x' })
+  assertFailure(broken, 400, /装配清单/)
+  assert.equal(broken.json.code, 'PACKS_INVALID')
+})
+
+test('POST dispatch：宿主未采用预生成会话 id → forget planned + warning，仅软约束但仍 200', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: false } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.toolFaceApplied, false)
+  assert.equal(response.json.toolFace.prepared, true)
+  const planned = deps.host.toolFace.prepared[0].sessionId
+  assert.deepEqual(deps.host.toolFace.forgotten, [planned], '未采用的 pending id 必须清理')
+  assert.match(response.json.warnings.join('\n'), /未采用预生成会话 id/)
+  assert.equal(deps.host.dispatchCalls[0].sessionId, 'background-session')
+  assert.equal(store.docs.get('dispatch').kind, 'pack', '软派单仍持久化记录')
+})
+
+test('POST dispatch：宿主适配器没有工具面方法 → 软派单 + warning（不阻断）', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({ store, hostOptions: { omitToolFace: true } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.toolFaceApplied, false)
+  assert.equal(response.json.toolFace.prepared, false)
+  assert.match(response.json.warnings.join('\n'), /软约束|不支持工具面/)
+  assert.equal(deps.host.dispatchCalls.length, 1)
+})
+
+test('POST dispatch：工具面支持不可用（prepare=false）→ 软派单 + warning', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true, toolFaceUnavailable: true } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.toolFaceApplied, false)
+  assert.equal(response.json.toolFace.prepared, false)
+  assert.match(response.json.warnings.join('\n'), /软约束|不支持工具面/)
+  assert.equal(deps.host.dispatchCalls.length, 1)
+})
+
+test('POST dispatch：pack 创建会话失败 → 502 failed 记录 + forget planned', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({ store, hostOptions: { createDispatchError: 'no workspace' } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assertFailure(response, 502, /no workspace/)
+  const written = store.docs.get('dispatch')
+  assert.equal(written.state, 'failed')
+  assert.equal(written.kind, 'pack')
+  assert.equal(written.sessionId, '')
+  const planned = deps.host.toolFace.prepared[0].sessionId
+  assert.deepEqual(deps.host.toolFace.forgotten, [planned], '创建失败也必须清理 pending 工具面')
+})
+
+test('POST dispatch：kind="map" 行为不回归（不调用工具面方法、响应无 toolFace 字段）', async () => {
+  const deps = makeDeps({
+    store: createFakeStore({ selections: { selected: ['dev'], custom: '' }, scan: sampleScan() }),
+  })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.dispatch.kind, 'map')
+  assert.equal(response.json.toolFaceApplied, undefined)
+  assert.equal(response.json.toolFace, undefined)
+  assert.deepEqual(deps.host.toolFace.prepared, [])
+  assert.deepEqual(deps.host.toolFace.forgotten, [])
+  assert.equal(deps.host.dispatchCalls.length, 1)
+})
+
+test('POST dispatch：kind 未知值 → 400 且提示 map/pack', async () => {
+  const deps = makeDeps({ store: createFakeStore({}) })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'chat' })
+  assertFailure(response, 400, /map/)
+  assert.match(response.json.error, /pack/)
+  assert.equal(deps.host.dispatchState.sessionsCreated, 0)
+})
+
+test('TOOL_SPECS：stow_dispatch 支持 kind map/pack 与可选 packId，描述标注实验性/软约束', () => {
+  const byName = new Map(TOOL_SPECS.map((spec) => [spec.name, spec]))
+  const spec = byName.get('stow_dispatch')
+  assert.ok(spec !== undefined, 'TOOL_SPECS 必须暴露 stow_dispatch')
+  assert.equal(spec.path, ROUTE_PATHS.dispatch)
+  assert.equal(spec.parameters.kind.required, true)
+  assert.equal(spec.parameters.kind.type, 'string')
+  assert.equal(spec.parameters.packId.type, 'string')
+  assert.equal(Object.hasOwn(spec.parameters.packId, 'required'), false, '可选参数必须省略 required')
+  assert.match(spec.description, /pack/)
+  assert.match(spec.description, /实验性/)
+  assert.match(spec.description, /run_code/)
+  assert.match(spec.description, /软约束|warning/)
+})
+
+test('registerTools：stow_dispatch 走同一派单路由（pack 软派单可调用）', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true } })
+  const tools = registerTools({ deps })
+  const shell = tools.find((tool) => tool.name === 'stow_dispatch')
+  const result = await shell.handler({ kind: 'pack', packId: pack.id })
+  assert.equal(result.dispatch.kind, 'pack')
+  assert.equal(result.toolFaceApplied, true)
+  assert.equal(deps.host.dispatchCalls.length, 1)
+})
+
+test('POST dispatch：kind="pack" 宿主缺少后台派单服务 → 503，且不准备工具面', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({
+    store,
+    hostOptions: { dispatchSupport: { available: false, reason: '宿主缺少 sessionController' } },
+  })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assertFailure(response, 503, /sessionController/)
+  assert.deepEqual(deps.host.toolFace.prepared, [])
+  assert.equal(deps.host.dispatchState.sessionsCreated, 0)
+  assert.equal(deps.host.dispatchCalls.length, 0)
+})
 

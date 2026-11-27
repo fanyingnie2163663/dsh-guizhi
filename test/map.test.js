@@ -149,3 +149,18 @@ test('createMap：不改写入参，返回新的顶层对象', () => {
   assert.equal(JSON.stringify(input), before)
   assert.notStrictEqual(map, input)
 })
+
+test('createMap：capability.suggestion 可选，原样保留；缺省时不补', () => {
+  const withSuggestion = validInput()
+  withSuggestion.stages[0].capabilities[2].suggestion = '保留一个，另一个移出常用工作流。'
+  const map = createMap(withSuggestion)
+  assert.deepEqual(map, withSuggestion)
+  assert.equal(map.stages[0].capabilities[2].suggestion, '保留一个，另一个移出常用工作流。')
+
+  const without = createMap(validInput())
+  assert.equal(Object.hasOwn(without.stages[0].capabilities[2], 'suggestion'), false, '缺省不得补空字符串')
+
+  const bad = validInput()
+  bad.stages[0].capabilities[2].suggestion = 42
+  assert.throws(() => createMap(bad), /suggestion/)
+})
