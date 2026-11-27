@@ -1,6 +1,6 @@
 {
   "name": "@fanyingnie/dsh-guizhi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "归置（Stow）：按你的工作流归置 DSH 插件、工具与技能，生成可导出能力包",
   "license": "MIT",
   "type": "module",

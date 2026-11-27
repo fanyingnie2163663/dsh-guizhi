@@ -15,7 +15,7 @@
 
 /** Plugin rows: npm rows with a version, patch rows without one. */
 export const PLUGIN_ROWS = [
-  { name: '@fanyingnie/dsh-guizhi', version: '0.1.0', source: 'patch' },
+  { name: '@fanyingnie/dsh-guizhi', version: '0.2.0', source: 'patch' },
   { name: 'dsh-ops', version: '0.5.6', source: 'npm' },
   { name: 'dsh-better-sidebar', source: 'patch' },
 ]

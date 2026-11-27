@@ -26,8 +26,10 @@
  *    owners, 30-day usage; used30d === null renders 未知, NEVER 0) + rescan.
  * 2. 场景：six built-in chips + one-sentence custom text + save (POST scenarios).
  * 3. 工作流：stage cards with capability dots (have green / missing yellow /
- *    redundant gray), click a capability to expand its evidence; bottom buttons
- *    call 查缺补漏/生成工具包/预览/应用/回滚 and 派单草稿, results shown in place.
+ *    redundant gray), click a capability to expand its 精简建议 (when the host
+ *    derived one) and evidence; bottom buttons call 查缺补漏/生成装配清单/预览/
+ *    应用/回滚 and 派单草稿, results shown in place. 一键整理 only reaches the
+ *    preview: it writes no packs/<id>.json and never applies on its own.
  *
  * Transport: every request is document-relative (api/guizhi/...), never
  * root-absolute, because the host deploys the GUI under a base path and serves
@@ -64,7 +66,7 @@
    */
   var PANEL_ORDER = 20
   /** The only version constant in the browser half. */
-  var PLUGIN_VERSION = '0.1.0'
+  var PLUGIN_VERSION = '0.2.0'
   var STYLE_MARKER = 'data-guizhi-style'
   /** Document-relative API prefix (never root-absolute; see module header). */
   var API_BASE = 'api/guizhi/'
@@ -106,6 +108,26 @@
     daily: 'sun',
   }
 
+  /**
+   * One-click catalog presets. A chip only fills the URL input — it never saves
+   * and never requests the source; the user still has to press 「保存」. Keep in
+   * sync with the README 「推荐源」 table (guarded by test/client-sync.test.js).
+   */
+  var SOURCE_PRESETS = [
+    {
+      id: 'dshopen',
+      label: 'dshopen 开放市场',
+      url: 'https://dshopen.org/index.json',
+      note: '社区索引 · 实测约 3s、缓存约 0.6MB（在 1MB 缓存上限内）',
+    },
+    {
+      id: 'jsdelivr',
+      label: 'jsDelivr 精选索引',
+      url: 'https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json',
+      note: '索引较大 · 实测约 7s、缓存约 3.2MB，超过 1MB 缓存上限，会每次重新拉取',
+    },
+  ]
+
   /** Human labels for the evidence keys the host half writes; unknown keys show raw. */
   var EVIDENCE_LABELS = {
     source: '来源',
@@ -120,12 +142,20 @@
     at: '时间',
     refs: '引用',
     note: '说明',
+    origin: '来源类型',
+    overlap: '重叠说明',
+    installSource: '安装方式',
+    pluginVersion: '插件版本',
+    toolUsed30d: '工具近 30 天用量',
   }
+
+  /** Known `origin` values rendered in Chinese; anything else stays raw. */
+  var ORIGIN_LABELS = { bundled: '内置（bundled）', custom: '自定义（custom）' }
 
   var STATUS_LABELS = { have: '已有', missing: '缺', redundant: '冗余' }
 
   /** Proposal kind chips in the unified result card. */
-  var KIND_LABELS = { pack: '工具包', install: '安装', skill: '技能', plugin: '插件' }
+  var KIND_LABELS = { pack: '装配清单', install: '安装', skill: '技能', plugin: '插件' }
 
   /** Inline stroke-icon shapes, [tag, props] tuples shared by every icon() call. */
   var ICON_SHAPES = {
@@ -368,9 +398,17 @@
       '.gz-evidence-key{font-size:10px;line-height:1.5;color:var(--gz-text-3);letter-spacing:.02em}',
       '.gz-evidence-val{font-size:11.5px;line-height:1.5;color:var(--gz-text-2);word-break:break-word}',
       '.gz-evidence-empty{margin:0;font-size:11.5px;color:var(--gz-text-3);padding:2px 0}',
+      '.gz-advice{display:flex;flex-direction:column;gap:4px;margin:0 0 8px;padding:8px 10px;border:1px solid var(--gz-border-soft);border-left:3px solid var(--gz-accent);border-radius:var(--gz-radius-sm);background:var(--gz-tint);animation:gz-fade 140ms var(--gz-ease)}',
+      '.gz-advice-head{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:650;color:var(--gz-text)}',
+      '.gz-advice-icon{display:inline-flex;color:var(--gz-accent)}',
+      '.gz-advice-text{margin:0;font-size:11.5px;line-height:1.6;color:var(--gz-text-2);word-break:break-word}',
+      '.gz-advice-hint{margin:0;font-size:10.5px;line-height:1.5;color:var(--gz-text-3)}',
       '.gz-actionbar{position:sticky;bottom:-4px;z-index:3;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:var(--gz-bg);box-shadow:0 -8px 20px -14px rgba(0,0,0,.3)}',
       '.gz-actionbar-main{display:flex;flex-wrap:wrap;gap:7px;align-items:center}',
       '.gz-actionbar-snap{display:flex;flex-wrap:wrap;gap:7px;align-items:center;padding-top:8px;border-top:1px dashed var(--gz-border-soft)}',
+      '.gz-actionbar-skill{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding-top:8px;border-top:1px dashed var(--gz-border-soft)}',
+      '.gz-skill-optin{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;line-height:1.5;color:var(--gz-text-2);cursor:pointer;user-select:none}',
+      '.gz-skill-optin input{margin:0;accent-color:var(--gz-accent)}',
       '.gz-snap-label{font-size:10.5px;color:var(--gz-text-3);letter-spacing:.02em;white-space:nowrap}',
       '.gz-result{border:1px solid var(--gz-border-soft);border-radius:var(--gz-radius-md);background:var(--gz-card-bg);padding:12px 14px;display:flex;flex-direction:column;gap:10px;animation:gz-fade 150ms var(--gz-ease)}',
       '.gz-result-head{display:flex;align-items:flex-start;gap:9px}',
@@ -391,6 +429,7 @@
       '.gz-sources-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}',
       '.gz-sources-head strong{font-size:12px;font-weight:650;color:var(--gz-text)}',
       '.gz-sources-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+      '.gz-sources-presets{display:flex;flex-direction:column;gap:6px}',
       '.gz-sources-input{flex:1 1 260px;min-width:0}',
       '.gz-progress{display:flex;align-items:center;gap:14px;border:1px solid var(--gz-line,rgba(127,127,127,.24));border-radius:var(--gz-radius-md);padding:12px;background:rgba(127,127,127,.05)}',
       '.gz-progress-ring{position:relative;display:flex;align-items:center;justify-content:center;width:72px;height:72px;flex:0 0 auto}',
@@ -589,9 +628,37 @@
     var pairs = []
     for (var index = 0; index < keys.length; index += 1) {
       var key = keys[index]
-      pairs.push({ label: EVIDENCE_LABELS[key] || key, value: evidenceValue(evidence[key]) })
+      var value = evidence[key]
+      if (key === 'origin' && typeof value === 'string' && ORIGIN_LABELS[value] !== undefined) value = ORIGIN_LABELS[value]
+      pairs.push({ label: EVIDENCE_LABELS[key] || key, value: evidenceValue(value) })
     }
     return pairs
+  }
+
+  /**
+   * Key shared by the map renderer and GET state's advice view. The host's
+   * advice item carries stageId/capabilityId; the panel expands by the same pair.
+   */
+  function capabilityKey(stageId, capabilityId) {
+    return String(stageId) + '::' + String(capabilityId)
+  }
+
+  /**
+   * GET state advice ({ items }) -> lookup keyed by capabilityKey(). Tolerant of
+   * a missing or older host: malformed rows are ignored, so the panel simply
+   * shows the evidence grid as before.
+   */
+  function adviceLookup(advice) {
+    var table = {}
+    if (advice === null || typeof advice !== 'object' || !Array.isArray(advice.items)) return table
+    for (var index = 0; index < advice.items.length; index += 1) {
+      var item = advice.items[index]
+      if (item === null || typeof item !== 'object') continue
+      if (typeof item.stageId !== 'string' || typeof item.capabilityId !== 'string') continue
+      if (typeof item.text !== 'string' || item.text === '') continue
+      table[capabilityKey(item.stageId, item.capabilityId)] = item
+    }
+    return table
   }
 
   /**
@@ -647,6 +714,16 @@
       var draftHook = useState('')
       var draftText = draftHook[0]
       var setDraftText = draftHook[1]
+
+      /** Opt-in skill install: default false, so apply only exports the pack. */
+      var installSkillHook = useState(false)
+      var installSkill = installSkillHook[0]
+      var setInstallSkill = installSkillHook[1]
+
+      /** The most recently generated pack id; pack-aware drafts reuse it. */
+      var lastPackIdHook = useState('')
+      var lastPackId = lastPackIdHook[0]
+      var setLastPackId = lastPackIdHook[1]
 
       var snapshotHook = useState('')
       var snapshotId = snapshotHook[0]
@@ -783,13 +860,35 @@
         saveSource('')
       }
 
+      /** Fill the URL input from a recommended-source chip; never saves, never requests. */
+      function applySourcePreset(preset) {
+        setSourceDraft({ url: truncateByCodePoints(preset.url, 500), touched: true })
+      }
+
       function renderSources() {
         var busy = action.busy !== ''
-        var configured = typeof sourceDraft.url === 'string' && sourceDraft.url.trim() !== ''
+        var draftUrl = typeof sourceDraft.url === 'string' ? sourceDraft.url : ''
+        var savedUrl = sourcesDoc !== null && typeof sourcesDoc.url === 'string' ? sourcesDoc.url : ''
+        var configured = draftUrl.trim() !== ''
+        var dirty = draftUrl !== savedUrl
         return h('div', { className: 'gz-sources' },
           h('div', { className: 'gz-sources-head' },
             h('strong', {}, '目录源'),
-            h('span', { className: 'gz-hint' }, '查缺补漏用 · 目录格式与推荐源见 README「目录源」'),
+            h('span', { className: 'gz-hint' }, '查缺补漏用 · 目录格式见 README「目录源」'),
+          ),
+          h('div', { className: 'gz-sources-presets' },
+            h('span', { className: 'gz-hint' }, '推荐源（第三方 · 非官方）：点一下只填入输入框，不自动保存、不主动联网'),
+            h('div', { className: 'gz-chips' }, SOURCE_PRESETS.map(function (preset) {
+              return h('button', {
+                key: preset.id,
+                type: 'button',
+                className: 'gz-chip gz-source-preset',
+                title: preset.url + ' —— ' + preset.note + '（点一下只填入，不自动保存）',
+                onClick: function () {
+                  applySourcePreset(preset)
+                },
+              }, preset.label)
+            })),
           ),
           h('div', { className: 'gz-sources-row' },
             h('input', {
@@ -804,9 +903,20 @@
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onSaveSource }, '保存'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onClearSource }, '清空'),
           ),
-          h('p', { className: 'gz-hint' }, configured ? '已填写；保存后点「查缺补漏」或「一键整理」会使用该目录（缓存 6 小时，不可达会明确报错）。' : '只接受 http(s) 链接；推荐源与 format-1 目录示例见 README。保存后点「查缺补漏」或「一键整理」。'),
-          h('p', { className: 'gz-hint' }, '不内置默认目录源：外部目录只当数据读取，是否信任由你决定。'),
+          h('p', { className: 'gz-hint' }, dirty
+            ? '已填入但未保存：点「保存」后才生效（推荐源只填入，不会自动保存，也不会主动联网）。'
+            : configured
+              ? '已保存；点「查缺补漏」或「一键整理」会使用该目录（缓存 6 小时，不可达会明确报错）。'
+              : '只接受 http(s) 链接；可点上方推荐源快速填入，或粘贴自己的 format-1 目录地址。保存后点「查缺补漏」或「一键整理」。'),
+          h('p', { className: 'gz-hint' }, '不内置默认目录源：推荐源只是快捷填入，外部目录只当数据读取，是否信任由你决定。'),
         )
+      }
+
+      /** Opt-in: install the workflow skill only when the user ticks the box. */
+      function onInstallSkillChange(event) {
+        var checked =
+          event !== null && event !== undefined && event.target !== null && event.target !== undefined && event.target.checked === true
+        setInstallSkill(checked)
       }
 
       function onScan() {
@@ -856,11 +966,11 @@
         }, 350)
         apiRequest('pipeline', { method: 'POST', body: {} }).then(function (payload) {
           clearInterval(pollTimer)
-          var applied = payload !== null && typeof payload === 'object' && payload.apply !== null && typeof payload.apply === 'object' ? payload.apply : null
-          if (applied !== null && typeof applied.snapshotId === 'string' && applied.snapshotId !== '') setSnapshotId(applied.snapshotId)
+          var pipelineWarnings = payload !== null && typeof payload === 'object' && Array.isArray(payload.warnings) ? payload.warnings : []
+          if (payload !== null && typeof payload === 'object' && typeof payload.snapshotId === 'string' && payload.snapshotId !== '') setSnapshotId(payload.snapshotId)
           setPipeline({ status: 'done', percent: 100, step: null, steps: Array.isArray(payload.steps) ? payload.steps : [] })
           setResult({ kind: 'pipeline', payload: payload })
-          setAction({ busy: '', message: '一键整理完成', error: '', warnings: [] })
+          setAction({ busy: '', message: '一键整理完成（已到预览，未写入文件）', error: '', warnings: pipelineWarnings })
           loadState()
         }, function (error) {
           clearInterval(pollTimer)
@@ -889,9 +999,12 @@
         }
         var stageIds = []
         for (var index = 0; index < stages.length; index += 1) stageIds.push(stages[index].id)
-        runAction('生成工具包', function () {
-          return apiRequest('pack', { method: 'POST', body: { stageIds: stageIds, title: '归置能力包' } })
+        runAction('生成装配清单', function () {
+          return apiRequest('pack', { method: 'POST', body: { stageIds: stageIds, title: '归置装配清单' } })
         }, function (payload) {
+          var generatedPack =
+            payload !== null && typeof payload === 'object' && payload.pack !== null && typeof payload.pack === 'object' ? payload.pack : null
+          if (generatedPack !== null && typeof generatedPack.id === 'string' && generatedPack.id !== '') setLastPackId(generatedPack.id)
           setResult({ kind: 'pack', payload: payload })
         })
       }
@@ -913,12 +1026,12 @@
         var ids = []
         for (var index = 0; index < preview.items.length; index += 1) ids.push(preview.items[index].id)
         runAction('应用', function () {
-          return apiRequest('apply', { method: 'POST', body: { ids: ids } })
+          return apiRequest('apply', { method: 'POST', body: { ids: ids, installSkill: installSkill === true } })
         }, function (payload) {
           if (payload !== null && typeof payload === 'object' && typeof payload.snapshotId === 'string' && payload.snapshotId !== '') {
             setSnapshotId(payload.snapshotId)
           }
-          setResult({ kind: 'apply', payload: payload })
+          setResult({ kind: 'apply', payload: payload, installSkill: installSkill === true })
           setPreview(null)
         })
       }
@@ -941,11 +1054,14 @@
       }
 
       function onDraft() {
+        var body = { kind: 'dispatch' }
+        if (lastPackId !== '') body.packId = lastPackId
+        var usedPackId = lastPackId
         runAction('生成派单草稿', function () {
-          return apiRequest('draft', { method: 'POST', body: { kind: 'dispatch' } })
+          return apiRequest('draft', { method: 'POST', body: body })
         }, function (payload) {
           setDraftText(typeof payload.text === 'string' ? payload.text : '')
-          setResult({ kind: 'draft', payload: payload })
+          setResult({ kind: 'draft', payload: payload, packId: usedPackId })
           setCopyHint('')
         })
       }
@@ -1005,6 +1121,25 @@
           return apiRequest('dispatch', { method: 'POST', body: { kind: 'map' } })
         }, function (payload) {
           setResult({ kind: 'dispatch', payload: payload })
+        })
+      }
+
+      /**
+       * S3: dispatch one experimental worker for the most recent pack and report
+       * the tool-face diagnostics the host returns (toolFace.report). The panel
+       * never assumes the visible tool set changed: toolFaceApplied only means
+       * restrict was called, and the real-machine reading stayed 67/67.
+       */
+      function onDispatchPack() {
+        if (lastPackId === '') {
+          setAction({ busy: '', message: '', error: '先生成装配清单：派发 worker 需要最近一次装配清单 id', warnings: [] })
+          return
+        }
+        var packId = lastPackId
+        runAction('派发 worker（实验性）', function () {
+          return apiRequest('dispatch', { method: 'POST', body: { kind: 'pack', packId: packId } })
+        }, function (payload) {
+          setResult({ kind: 'dispatchPack', payload: payload, packId: packId })
         })
       }
 
@@ -1498,13 +1633,15 @@
         }
         if (result.kind === 'pack') {
           var pack = payload.pack !== null && typeof payload.pack === 'object' ? payload.pack : {}
-          return resultCard('info', '已生成能力包提案（等待预览/应用）', [
+          var packWarnCount = Array.isArray(payload.warnings) ? payload.warnings.length : 0
+          return resultCard(packWarnCount > 0 ? 'warn' : 'info', '已生成装配清单提案（等待预览/应用）', [
             h('p', { className: 'gz-result-meta' },
               'id ' + String(pack.id || '') +
               '；工具 ' + String(Array.isArray(pack.tools) ? pack.tools.length : 0) + ' 个' +
               '；技能 ' + String(Array.isArray(pack.skills) ? pack.skills.length : 0) + ' 个' +
               '；阶段 ' + String(Array.isArray(pack.stageIds) ? pack.stageIds.length : 0) + ' 个'),
-            h('p', { className: 'gz-hint' }, '应用成功后写入 packs/<id>.json（先快照、可回滚）；v1 只导出声明文件，不安装任何插件、不改 profile。'),
+            h('p', { className: 'gz-hint' }, '应用时默认只导出 packs/<id>.json；勾选「应用时安装工作流技能」时会写入 $DSH_HOME/skills/stow-<id>/SKILL.md（frontmatter 默认 disable-model-invocation: true，不进模型技能目录；可回滚）。真机探针：写入 SKILL.md 后当前会话的技能列表没有刷新（skills 总数不变），预计需要新会话 / 重启后才可能可见（未完全验证）。不安装插件、不改 profile，也不限制工具面。'),
+            renderWarningDetails(payload.warnings, '警告'),
           ])
         }
         if (result.kind === 'preview') {
@@ -1517,9 +1654,22 @@
         }
         if (result.kind === 'apply') {
           var applied = Array.isArray(payload.applied) ? payload.applied : []
+          var installRequested = result.installSkill === true
           var applyChildren = [h('p', { className: 'gz-result-ok' }, icon('check', 13), h('span', {}, '已应用 ' + String(applied.length) + ' 条'))]
           if (typeof payload.snapshotId === 'string' && payload.snapshotId !== '') {
             applyChildren.push(h('p', { className: 'gz-result-meta' }, '快照 id（已填入回滚框）：', h('code', { className: 'gz-hash' }, payload.snapshotId)))
+          }
+          var installedSkills = Array.isArray(payload.skills) ? payload.skills : []
+          if (installedSkills.length > 0) {
+            applyChildren.push(h('p', { className: 'gz-result-meta' }, '已安装工作流技能（$DSH_HOME/skills；真机探针：当前会话的技能列表没有刷新，新会话 / 重启后是否可见未完全验证；可回滚）：'))
+            applyChildren.push(h('ul', { className: 'gz-result-list' }, installedSkills.map(function (skill, skillIndex) {
+              var skillName = skill !== null && typeof skill === 'object' && typeof skill.name === 'string' ? skill.name : String(skill)
+              return h('li', { className: 'gz-result-item', key: 'apply-skill-' + skillIndex }, h('span', { className: 'gz-result-item-title' }, skillName))
+            })))
+          } else if (installRequested) {
+            applyChildren.push(h('p', { className: 'gz-result-meta' }, '本次未安装技能（清单为空或技能目录不可用，见警告）。'))
+          } else {
+            applyChildren.push(h('p', { className: 'gz-result-meta' }, '本次只导出装配清单，未安装技能（勾选「应用时安装工作流技能」可安装）。'))
           }
           applyChildren.push(renderWarningDetails(payload.warnings, '警告'))
           return resultCard('success', '已应用 ' + String(applied.length) + ' 条', applyChildren)
@@ -1531,35 +1681,40 @@
         }
         if (result.kind === 'pipeline') {
           var steps = Array.isArray(payload.steps) ? payload.steps : []
-          var applied = payload.apply !== null && typeof payload.apply === 'object' ? payload.apply : null
-          var pack = payload.pack !== null && typeof payload.pack === 'object' ? payload.pack : {}
+          var previewInfo = payload.preview !== null && typeof payload.preview === 'object' ? payload.preview : {}
+          var previewCount = typeof previewInfo.itemCount === 'number' && isFinite(previewInfo.itemCount) ? previewInfo.itemCount : 0
+          var previewHash = typeof previewInfo.hash === 'string' ? previewInfo.hash : ''
           var stepRows = steps.map(function (step, stepIndex) {
             var status = step !== null && typeof step === 'object' && typeof step.status === 'string' ? step.status : 'ok'
             var label = step !== null && typeof step === 'object' && typeof step.label === 'string' ? step.label : ''
             var detail = step !== null && typeof step === 'object' && typeof step.detail === 'string' ? step.detail : ''
             return h('li', { key: 'pipeline-step-' + stepIndex, className: status === 'warn' ? 'gz-status-warn' : '' }, label + '：' + detail)
           })
-          var pipelineChildren = [
-            h('ul', { className: 'gz-warn-list' }, stepRows),
-            h('p', { className: 'gz-result-meta' }, '能力包：' + String(pack.id || '') + '（工具 ' + String(Array.isArray(pack.tools) ? pack.tools.length : 0) + ' 个 / 技能 ' + String(Array.isArray(pack.skills) ? pack.skills.length : 0) + ' 个）'),
-          ]
-          if (applied !== null && typeof applied.error === 'string' && applied.error !== '') {
-            pipelineChildren.push(h('p', { className: 'gz-result-err' }, icon('alert', 13), h('span', {}, '应用失败：' + applied.error)))
-          } else if (applied !== null) {
-            pipelineChildren.push(h('p', { className: 'gz-result-ok' }, icon('check', 13), h('span', {}, '已自动应用 ' + String(Array.isArray(applied.applied) ? applied.applied.length : 0) + ' 条 pack 提案' + (typeof applied.snapshotId === 'string' ? '，快照 ' + applied.snapshotId + '（已填入回滚框）' : ''))))
+          var pipelineChildren = [h('ul', { className: 'gz-warn-list' }, stepRows)]
+          pipelineChildren.push(h('p', { className: 'gz-result-ok' }, icon('check', 13), h('span', {}, '预览完成：' + String(previewCount) + ' 条' + (previewHash === '' ? '' : '（hash ' + previewHash.slice(0, 16) + '…）'))))
+          if (typeof payload.snapshotId === 'string' && payload.snapshotId !== '') {
+            pipelineChildren.push(h('p', { className: 'gz-result-meta' }, '已建快照：', h('code', { className: 'gz-hash' }, payload.snapshotId)))
           }
+          pipelineChildren.push(h('p', { className: 'gz-hint' }, '确认后点「应用」才会写 packs/<id>.json；应用时默认只导出，勾选「应用时安装工作流技能」才会写技能目录（先快照、可回滚）；v1 不安装插件、不改 profile，也不限制工具面。'))
           pipelineChildren.push(renderWarningDetails(payload.warnings, '警告'))
-          var hasWarn = (applied !== null && typeof applied.error === 'string' && applied.error !== '') || (payload.gaps !== null && typeof payload.gaps === 'object' && typeof payload.gaps.error === 'string' && payload.gaps.error !== '')
-          return resultCard(hasWarn ? 'warn' : 'success', '一键整理完成', pipelineChildren)
+          var hasWarn = (payload.gaps !== null && typeof payload.gaps === 'object' && typeof payload.gaps.error === 'string' && payload.gaps.error !== '') || (Array.isArray(payload.warnings) && payload.warnings.length > 0)
+          for (var warnIndex = 0; warnIndex < steps.length; warnIndex += 1) {
+            if (steps[warnIndex] !== null && typeof steps[warnIndex] === 'object' && steps[warnIndex].status === 'warn') hasWarn = true
+          }
+          return resultCard(hasWarn ? 'warn' : 'success', '一键整理完成（已到预览，未写入文件）', pipelineChildren)
         }
         if (result.kind === 'draft') {
-          return resultCard('info', '派单草稿（面板不会代发）', [
+          var draftChildren = [
             h('textarea', { className: 'gz-input gz-draft', readOnly: true, value: typeof payload.text === 'string' ? payload.text : draftText, 'aria-label': '派单草稿文本' }),
             h('div', { className: 'gz-actions gz-actions-flush' },
               h('button', { type: 'button', className: 'gz-btn', onClick: onCopyDraft }, '复制到剪贴板'),
               h('span', { className: 'gz-saved' }, copyHint),
             ),
-          ])
+          ]
+          if (typeof result.packId === 'string' && result.packId !== '') {
+            draftChildren.push(h('p', { className: 'gz-hint' }, '这是按装配清单生成的父→子软约束派单：只使用上述工具 / 技能；它不删工具 schema、不改变 worker 实际可见工具，也不承诺 token 成本下降；面板不会代发。'))
+          }
+          return resultCard('info', '派单草稿（面板不会代发）', draftChildren)
         }
         if (result.kind === 'dispatch') {
           var dispatchPayload = payload.dispatch !== null && typeof payload.dispatch === 'object' ? payload.dispatch : {}
@@ -1569,7 +1724,61 @@
             h('p', { className: 'gz-hint' }, 'agent 会在后台会话里拆解并调用 stow_map_save；面板每 3 秒轮询，完成后工作流会自动出现。'),
           ])
         }
+        if (result.kind === 'dispatchPack') {
+          var workerDispatch = payload.dispatch !== null && typeof payload.dispatch === 'object' ? payload.dispatch : {}
+          var toolFace = payload.toolFace !== null && typeof payload.toolFace === 'object' ? payload.toolFace : {}
+          var requestedTools = Array.isArray(toolFace.requested) ? toolFace.requested : []
+          var toolFaceReport = toolFace.report !== null && typeof toolFace.report === 'object' ? toolFace.report : null
+          var workerStarted = typeof workerDispatch.startedAt === 'string' ? dispatchClock(workerDispatch.startedAt) : ''
+          var dispatchedPackId = typeof result.packId === 'string' && result.packId !== '' ? result.packId : ''
+          var dispatchChildren = [
+            h('p', { className: 'gz-result-meta' }, 'worker 会话：' + String(workerDispatch.sessionId || '') + (workerStarted === '' ? '' : '；开始于 ' + workerStarted) + (dispatchedPackId === '' ? '' : '；装配清单：' + dispatchedPackId)),
+            h('p', { className: 'gz-result-meta' }, '工具面诊断（toolFaceApplied）：' + (payload.toolFaceApplied === true ? 'true' : 'false') + '；请求限制工具 ' + String(requestedTools.length) + ' 个 —— toolFaceApplied 只说明 restrict 被调用过，不代表工具可见性改变；实际可见工具以 report.visible 为准。'),
+          ]
+          if (toolFaceReport !== null) {
+            var visibleTools = Array.isArray(toolFaceReport.visible) ? toolFaceReport.visible : []
+            var visibleShown = visibleTools.slice(0, 12)
+            var visibleRest = visibleTools.length - visibleShown.length
+            var allowedCount = Array.isArray(toolFaceReport.allowed) ? toolFaceReport.allowed.length : 0
+            var skippedCount = Array.isArray(toolFaceReport.skipped) ? toolFaceReport.skipped.length : 0
+            var leakedCount = Array.isArray(toolFaceReport.leaked) ? toolFaceReport.leaked.length : 0
+            dispatchChildren.push(h('p', { className: 'gz-result-meta' }, '实际可见工具（restrict 后）' + String(visibleTools.length) + ' 个' + (visibleShown.length === 0 ? '：' : '：' + visibleShown.join('、') + (visibleRest > 0 ? ' …（其余 ' + String(visibleRest) + ' 个省略）' : ''))))
+            dispatchChildren.push(h('p', { className: 'gz-result-meta' }, 'allowed ' + String(allowedCount) + ' / skipped ' + String(skippedCount) + ' / leaked ' + String(leakedCount) + '（诊断证据；leaked 是清单外仍可见的工具）'))
+            dispatchChildren.push(h('p', { className: 'gz-hint' }, '以上是宿主在 worker 创建后回传的实测工具名（诊断证据），不是「严格 N 个工具」的承诺：run_code、归置自身层与宿主豁免工具仍可能出现在其中，请以这份实测列表为准。'))
+            if (typeof toolFaceReport.reason === 'string' && toolFaceReport.reason !== '') {
+              dispatchChildren.push(h('p', { className: 'gz-hint' }, '工具面降级原因：' + toolFaceReport.reason))
+            }
+          } else {
+            dispatchChildren.push(h('p', { className: 'gz-hint' }, '本次 1 秒内未取到宿主实测报告（toolFace.report 为空），不伪造可见工具列表；请按下面的 warnings 与 worker 实际工具列表核对。'))
+          }
+          dispatchChildren.push(h('p', { className: 'gz-hint' }, '真机实测（DSH 0.2.2-rc.5）：agent.ctx.tools.restrict({ allow }) 调用成功，但 worker 实际可见工具仍为 67/67（未缩减，report.visible / leaked 为诊断证据）。因此 v1 不承诺隔离 worker 工具面、不承诺严格 N 个工具、不承诺 token 成本下降。'))
+          dispatchChildren.push(h('p', { className: 'gz-hint' }, '实验性：在 agent/created 后对 agent.ctx.tools.restrict({ allow }) 做一次调用并回传工具面诊断；它不会改变 worker 实际可见工具，run_code 与部分宿主豁免工具可能仍可见，宿主版本不支持或未采用预生成会话 id 时会降级为纯软约束。验收请以宿主实测的 report.visible / worker 实际工具列表为准，不要只看 toolFaceApplied。'))
+          dispatchChildren.push(h('p', { className: 'gz-hint' }, '与第 10 个 stow_* 工具 stow_dispatch 同一实现（POST /api/guizhi/dispatch，kind=pack）。'))
+          dispatchChildren.push(renderWarningDetails(payload.warnings, '警告'))
+          return resultCard(payload.toolFaceApplied === true ? 'info' : 'warn', '已提交 worker 派发（实验性）', dispatchChildren)
+        }
         return null
+      }
+
+      /**
+       * One capability's 精简建议 block. The host's GET state `advice` view is
+       * the source of the text (a suggestion written into the map, or a
+       * fact-only derived one); the panel neither generates nor executes it.
+       */
+      function renderCapabilityAdvice(advice) {
+        if (advice === null || typeof advice !== 'object') return null
+        var title = typeof advice.title === 'string' && advice.title !== '' ? advice.title : '建议'
+        var text = typeof advice.text === 'string' ? advice.text : ''
+        if (text === '') return null
+        var hint = typeof advice.hint === 'string' ? advice.hint : ''
+        return h('div', { className: 'gz-advice', role: 'note' },
+          h('div', { className: 'gz-advice-head' },
+            h('span', { className: 'gz-advice-icon' }, icon('sparkles', 12)),
+            h('span', { className: 'gz-advice-title' }, title),
+          ),
+          h('p', { className: 'gz-advice-text' }, text),
+          hint === '' ? null : h('p', { className: 'gz-advice-hint' }, hint),
+        )
       }
 
       function renderMapActions() {
@@ -1578,10 +1787,31 @@
           h('div', { className: 'gz-actionbar-main' },
             h('button', { type: 'button', className: 'gz-btn gz-btn-primary', disabled: busy, onClick: onPipeline }, '一键整理'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onGaps }, '查缺补漏'),
-            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPack }, '生成工具包'),
+            h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPack }, '生成装配清单'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onPreview }, '预览变更'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onApply }, '应用'),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onDraft }, '生成派单草稿'),
+            h('button', {
+              type: 'button',
+              className: 'gz-btn',
+              disabled: busy || lastPackId === '',
+              onClick: onDispatchPack,
+              title: lastPackId === '' ? '先生成装配清单后才能派发 worker（实验性）' : '按最近一次装配清单派发 worker（实验性，回传工具面诊断）',
+            }, '派发 worker（实验性）'),
+          ),
+          h('div', { className: 'gz-actionbar-skill' },
+            h('label', { className: 'gz-skill-optin', htmlFor: 'gz-install-skill' },
+              h('input', {
+                id: 'gz-install-skill',
+                type: 'checkbox',
+                checked: installSkill,
+                onChange: onInstallSkillChange,
+              }),
+              h('span', {}, '应用时安装工作流技能（写入 $DSH_HOME/skills，默认不装，可回滚）'),
+            ),
+            h('span', { className: 'gz-hint' }, installSkill
+              ? '已勾选：应用时会把非空清单安装为 $DSH_HOME/skills/stow-<id>/SKILL.md（可回滚）；真机探针：当前会话未刷新，需要新会话 / 重启后才可能可见（未完全验证）'
+              : '未勾选：应用时只导出 packs/<id>.json，不安装技能'),
           ),
           h('div', { className: 'gz-actionbar-snap' },
             h('label', { className: 'gz-snap-label', htmlFor: 'gz-snapshot' }, '快照 id'),
@@ -1595,6 +1825,9 @@
             }),
             h('button', { type: 'button', className: 'gz-btn', disabled: busy, onClick: onRollback }, '回滚'),
           ),
+          h('p', { className: 'gz-hint' }, lastPackId === ''
+            ? '「派发 worker（实验性）」需要最近一次装配清单：先点「生成装配清单」，再按该清单派发（与 stow_dispatch 同一实现，共 10 个 stow_* 工具）。'
+            : '「派发 worker（实验性）」按最近一次装配清单 ' + lastPackId + ' 派发：实验性，结果卡回传工具面诊断（restrict 是否被调用、实际可见工具与 leaked）；真机实测 restrict 未改变可见工具，验收以 report.visible 为准。'),
         )
       }
 
@@ -1602,6 +1835,7 @@
         var map = data !== null && typeof data === 'object' && data.map !== null && typeof data.map === 'object' ? data.map : null
         var stages = map !== null && Array.isArray(map.stages) ? map.stages : []
         var scenarioList = map !== null && Array.isArray(map.scenarios) ? map.scenarios : []
+        var adviceByKey = adviceLookup(data !== null && data !== undefined ? data.advice : null)
         var meta = '还没有选场景；可以先在「场景」页选择并保存。'
         if (scenarioList.length > 0) {
           meta = '已选场景：' + scenarioList.map(scenarioTitle).join('、')
@@ -1646,8 +1880,9 @@
                   ? h('p', { className: 'gz-stage-empty' }, '这个阶段还没有能力点')
                   : h('div', { className: 'gz-caps' }, capabilities.map(function (capability, capabilityIndex) {
                       var capId = capability !== null && capability !== undefined && capability.id !== undefined ? String(capability.id) : String(capabilityIndex)
-                      var openKey = String(stage.id) + '::' + capId
+                      var openKey = capabilityKey(stage.id, capId)
                       var open = expandedCap === openKey
+                      var advice = adviceByKey[openKey] || null
                       var rawStatus = capability !== null && capability !== undefined ? capability.status : ''
                       var knownStatus = rawStatus === 'have' || rawStatus === 'missing' || rawStatus === 'redundant'
                       var statusText = knownStatus ? statusLabel(rawStatus) : '未标注'
@@ -1669,6 +1904,7 @@
                         ),
                         open
                           ? h('div', { className: 'gz-evidence' },
+                              renderCapabilityAdvice(advice),
                               pairs.length === 0
                                 ? h('p', { className: 'gz-evidence-empty' }, '（无证据字段）')
                                 : h('dl', { className: 'gz-evidence-grid' }, pairs.map(function (pair, pairIndex) {

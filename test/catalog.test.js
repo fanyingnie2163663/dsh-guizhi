@@ -110,6 +110,28 @@ test('parseFormat1：合法夹具解析出条目（可选字段原样保留、�
   assert.equal(catalog.entries[3].name, 'dsh-installed-already')
 })
 
+test('parseFormat1：真实 format-1 索引的本地化 title/description（title 取 zh → en，description 拼接双语）', () => {
+  const catalog = parseFormat1({
+    format: 1,
+    plugins: [
+      {
+        name: 'dsh-plan-note',
+        title: { zh: '计划批注', en: 'Plan notes' },
+        description: { en: 'Inline annotations for plan review', zh: '给 DSH 计划评审加选区批注' },
+      },
+      { name: 'dsh-rewind', title: { en: 'Rewind' }, description: { zh: '对话回退' }, version: '0.2.0' },
+    ],
+  })
+  assert.deepEqual(catalog.entries, [
+    {
+      name: 'dsh-plan-note',
+      title: '计划批注',
+      description: '给 DSH 计划评审加选区批注 Inline annotations for plan review',
+    },
+    { name: 'dsh-rewind', title: 'Rewind', description: '对话回退', version: '0.2.0' },
+  ])
+})
+
 test('parseFormat1：形状不符抛 CatalogFormatError（不静默返回空）', () => {
   const badShapes = [
     null,
@@ -125,6 +147,9 @@ test('parseFormat1：形状不符抛 CatalogFormatError（不静默返回空）'
     { plugins: [{ name: 'ok', title: 7 }] },
     { plugins: [{ name: 'ok', description: null }] },
     { plugins: [{ name: 'ok', version: 2 }] },
+    { plugins: [{ name: 'ok', title: {} }] },
+    { plugins: [{ name: 'ok', description: { en: 7 } }] },
+    { plugins: [{ name: 'ok', title: { zh: '   ' } }] },
   ]
   for (const shape of badShapes) {
     assert.throws(
@@ -364,6 +389,24 @@ test('matchGaps：entry.description 命中（大小写不敏感，单向匹配�
   ] }] }
   const gaps = matchGaps({ scan: { plugins: [] }, map, catalog })
   assert.deepEqual(gaps.map((gap) => gap.evidence.refs[0]), ['plugin-two'])
+})
+
+test('matchGaps：本地化条目按解析后的文本命中（中文标题、英文描述都可匹配）', () => {
+  const catalog = {
+    entries: [
+      {
+        name: 'dsh-plan-note',
+        title: '计划批注',
+        description: '给 DSH 计划评审加选区批注 Inline annotations for plan review',
+      },
+    ],
+  }
+  const map = { scenarios: [], stages: [{ id: 's', title: '阶段', capabilities: [
+    { id: 'plan-annotate', title: '计划批注', status: 'missing', evidence: {} },
+    { id: 'inline-annotations', title: 'Inline annotations', status: 'missing', evidence: {} },
+  ] }] }
+  const gaps = matchGaps({ scan: { plugins: [] }, map, catalog })
+  assert.deepEqual(gaps.map((gap) => gap.evidence.refs[0]), ['dsh-plan-note', 'dsh-plan-note'])
 })
 
 test('matchGaps：反向-only 不命中（capability 文本包含 entry 短文本时不推荐）', () => {
