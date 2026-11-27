@@ -154,7 +154,7 @@ function createFakeHost(options = {}) {
       { name: 'grep', description: 'Search file contents', owner: '@deepseek-ai/dsh-tool-fs' },
       { name: 'stow_scan', description: 'Scan this host', owner: '@fanyingnie/dsh-guizhi' },
     ]
-  const plugins = options.plugins ?? [{ name: '@fanyingnie/dsh-guizhi', version: '0.1.0', source: 'patch' }]
+  const plugins = options.plugins ?? [{ name: '@fanyingnie/dsh-guizhi', version: '0.2.0', source: 'patch' }]
   const skills = options.skills ?? [{ name: 'brainstorming', source: 'user' }]
   const events =
     options.events ??

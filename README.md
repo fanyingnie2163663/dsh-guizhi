@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/node-%E2%89%A524.9-339933" alt="node">
   <img src="https://img.shields.io/badge/DSH-%E2%89%A50.2.2-4d6bfe" alt="dsh">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
-  <img src="https://img.shields.io/badge/status-v0.1-8b5cf6" alt="status">
+  <img src="https://img.shields.io/badge/status-v0.2.0-8b5cf6" alt="status">
 </p>
 
 <p align="center">
@@ -117,7 +117,7 @@
 
 要求：DSH Desktop `≥ 0.2.2`（开发基线 `0.2.2-rc.5`）、Node `≥ 24.9`。
 
-npm：<https://www.npmjs.com/package/@fanyingnie/dsh-guizhi>（当前 `0.1.0`，仍属 0.x 早期版本，接口与界面可能变化）。
+npm：<https://www.npmjs.com/package/@fanyingnie/dsh-guizhi>（当前 `0.2.0`，仍属 0.x 早期版本，接口与界面可能变化）。
 
 <details>
 <summary><b>方式一：GUI（推荐）</b></summary>
@@ -289,7 +289,7 @@ test/          node:test：单元 + 路由 + HTTP 适配 + e2e
 
 ## 状态与已知限制
 
-- **v0.1 功能已实现**：492/492 测试通过（含 S2「技能安装 opt-in」「按 pack 生成派单草稿」与 S3 实验性「worker 派发 + 工具面诊断」；S1–S3 改动已实现（本轮提交）；npm `0.1.0` 为 0.x 早期版本）。
+- **v0.2.0 功能已实现**：492/492 测试通过（含 S2「技能安装 opt-in」「按 pack 生成派单草稿」与 S3 实验性「worker 派发 + 工具面诊断」；S1–S3 改动已实现（本轮提交）；npm `0.2.0` 为 0.x 早期版本）。
 - **冗余精简建议（v1.1 先行项）**：`capability.suggestion` 可选字段 + `GET /api/guizhi/state.advice` 派生视图；地图没写建议时按证据与扫描用量自动归纳（用量未知不写成 0，0 次不代表无用），只建议、不自动停用/卸载任何东西。
 - **「装配清单」v1 的真实能力**：`packs/<id>.json` 是 JSON 声明（阶段 / 工具 / 技能 / 建议）；**v1 的 pack 仍是声明 + 软派单**，应用默认只导出它。**技能安装是 opt-in（S2）**：勾选后才会把非空清单编译成 `$DSH_HOME/skills/stow-<id>/SKILL.md`（含工作流阶段 / 能力点、建议工具与技能、执行步骤与验收清单；frontmatter 默认 `disable-model-invocation: true`，不占模型技能目录、可手改后让模型自动调用；可回滚）。**不安装插件、不改 profile、不改变工具可见性**；「一键整理」到预览即止，不会替用户应用。真机检测（修复前）：写入后当前会话技能列表未刷新（32→32）；已加入 skills.invalidateCache() 刷新修复（待重启复验）。S3 的 worker 派发会调用 restrict 并回传工具面诊断，真机实测可见工具未缩减（67/67），不承诺隔离 / 严格 N / token 收益。
 - **按 pack 生成派单草稿（S2）**：`stow_draft` 可选 `packId`；有值时从 `packs` 状态生成父→子结构化软载荷（标题、阶段 / 能力点、建议工具 / 技能、执行步骤、验收清单，固定句说明「只使用上述工具/技能；这是软约束」）。它只是文本：不删工具 schema、不改变 worker 实际可见工具；S3 的 worker 派发会调用 restrict 并回传工具面诊断，真机实测未改变可见工具（67/67），不承诺隔离 / 严格 N / token 收益。

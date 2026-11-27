@@ -66,7 +66,7 @@
    */
   var PANEL_ORDER = 20
   /** The only version constant in the browser half. */
-  var PLUGIN_VERSION = '0.1.0'
+  var PLUGIN_VERSION = '0.2.0'
   var STYLE_MARKER = 'data-guizhi-style'
   /** Document-relative API prefix (never root-absolute; see module header). */
   var API_BASE = 'api/guizhi/'
