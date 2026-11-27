@@ -82,6 +82,12 @@ function fakeCtx(services = {}, warnings = []) {
   }
 }
 
+/**
+ * Adapter options that skip the real disk skill roots: these probe tests pin
+ * host-only counts. The disk merge itself is covered by test/skillscan.test.js.
+ */
+const NO_DISK_SKILL_ROOTS = { skillRoots: [] }
+
 /** A tools service whose global view contains two definitions. */
 function fakeTools() {
   return {
@@ -173,7 +179,7 @@ test('listPlugins 合并 profile package.json 依赖与 cordis.patch.yml 行', a
 })
 
 test('listSkills 把宿主 source/provider 归一成 source', async () => {
-  const adapter = createHostAdapter(fakeCtx({ skills: fakeSkills() }))
+  const adapter = createHostAdapter(fakeCtx({ skills: fakeSkills() }), NO_DISK_SKILL_ROOTS)
   assert.deepEqual(await adapter.listSkills(), [
     { name: 'brainstorming', source: 'user' },
     { name: 'writing-plans', source: 'bundled' },
@@ -235,7 +241,7 @@ test('probeHost 服务齐全：计数、profilePath、dshVersion、sessionEvents
     skills: fakeSkills(),
     sessionQuery: fakeSessionQuery(),
     profileContext: { name: 'test', dir, patchPath: join(dir, 'cordis.patch.yml') },
-  }), { dshVersion: '0.2.2-rc.5' })
+  }), { dshVersion: '0.2.2-rc.5', ...NO_DISK_SKILL_ROOTS })
   const result = await probeHost(adapter)
   assert.deepEqual(result, {
     tools: 2,
@@ -250,7 +256,7 @@ test('probeHost 服务齐全：计数、profilePath、dshVersion、sessionEvents
 
 test('probeHost 服务缺失：全空降级、有警告、绝不抛错', async () => {
   const warnings = []
-  const adapter = createHostAdapter(fakeCtx({}, warnings), { env: {}, argv: [], execPath: '' })
+  const adapter = createHostAdapter(fakeCtx({}, warnings), { env: {}, argv: [], execPath: '', ...NO_DISK_SKILL_ROOTS })
   const result = await probeHost(adapter)
   assert.deepEqual(result, {
     tools: 0,
@@ -278,7 +284,7 @@ test('服务抛错时逐项降级，不把异常抛给调用方', async () => {
       },
     },
   })
-  const adapter = createHostAdapter(ctx, { dshVersion: 'x', profilePath: '/nonexistent-guizhi-profile' })
+  const adapter = createHostAdapter(ctx, { dshVersion: 'x', profilePath: '/nonexistent-guizhi-profile', ...NO_DISK_SKILL_ROOTS })
   const result = await probeHost(adapter)
   assert.equal(result.tools, 0)
   assert.equal(result.skills, 0)
@@ -339,7 +345,7 @@ test('cordis.patch.yml 解析失败：有 warning，且不把结果当成「没�
 
 test('probeHost warnings 是快照：连续两次不累积，第二次不被第一次污染（Minor 3）', async () => {
   const logged = []
-  const adapter = createHostAdapter(fakeCtx({}, logged), { env: {}, argv: [], execPath: '' })
+  const adapter = createHostAdapter(fakeCtx({}, logged), { env: {}, argv: [], execPath: '', ...NO_DISK_SKILL_ROOTS })
   const first = await probeHost(adapter)
   assert.ok(first.warnings.length >= 4, '缺失能力应有警告：' + JSON.stringify(first.warnings))
   assert.deepEqual(adapter.warnings, [], '一次 probe 结束后 adapter 内部队列应已清空')

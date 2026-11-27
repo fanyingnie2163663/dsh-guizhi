@@ -228,6 +228,89 @@ test('disposer 抛错时 is dispose 隔离：继续释放其它 agent，不抛�
   assert.match(warnings.join('\n'), /undo failed|清理/)
 })
 
+/* ------------------------------------------------- S3 实际工具面报告（真机验收证据） */
+
+test('onCreated 报告 sessionId 与 restrict 后实际可见工具（visible）', () => {
+  const { controller, tools } = createHarness({ toolsOptions: { leaked: ['stow_scan'] } })
+  controller.plan('session-1', ['read'])
+  const result = controller.onCreated(createAgent('session-1', tools))
+  assert.equal(result.applied, true)
+  assert.equal(result.sessionId, 'session-1')
+  assert.deepEqual(result.allowed, ['read'])
+  assert.deepEqual(result.leaked, ['stow_scan'])
+  assert.deepEqual(result.visible, ['read', 'stow_scan'], 'visible 来自 restrict 后的 tools.view，而不是请求值')
+})
+
+test('takeReport：按 sessionId 取一次即删除；未知/非法 id 返回 null', () => {
+  const { controller, tools } = createHarness()
+  controller.plan('session-1', ['read'])
+  controller.onCreated(createAgent('session-1', tools))
+  const report = controller.takeReport('session-1')
+  assert.equal(report.sessionId, 'session-1')
+  assert.deepEqual(report.visible, ['read'])
+  assert.equal(controller.takeReport('session-1'), null, '报告只能取一次')
+  assert.equal(controller.takeReport('session-missing'), null)
+  assert.equal(controller.takeReport(''), null)
+  assert.equal(controller.takeReport(42), null)
+})
+
+test('失败分支也记录 visible 与 reason（无交集 / 缺 tools 时尽力记录当前视图）', () => {
+  const { controller, tools } = createHarness()
+  controller.plan('session-1', ['run_code'])
+  const noIntersection = controller.onCreated(createAgent('session-1', tools))
+  assert.equal(noIntersection.applied, false)
+  const report = controller.takeReport('session-1')
+  assert.equal(report.sessionId, 'session-1')
+  assert.equal(report.applied, false)
+  assert.equal(report.reason, 'no-restrictable-tools')
+  assert.deepEqual(report.skipped, ['run_code'])
+  assert.deepEqual(report.visible, ['read', 'grep', 'stow_scan'], 'restrict 未执行时记录当前可见工具')
+  const unavailable = createHarness({ getTools: () => undefined })
+  unavailable.controller.plan('session-2', ['read'])
+  unavailable.controller.onCreated(createAgent('session-2', unavailable.tools))
+  const empty = unavailable.controller.takeReport('session-2')
+  assert.equal(empty.applied, false)
+  assert.equal(empty.reason, 'tools-unavailable')
+  assert.deepEqual(empty.visible, [])
+})
+
+test('restrict 抛错时报告 reason=restrict-failed 并记录当前 visible', () => {
+  const tools = createFakeTools()
+  tools.restrict = () => { throw new Error('restrict unsupported') }
+  const { controller } = createHarness({ tools })
+  controller.plan('session-1', ['read'])
+  controller.onCreated(createAgent('session-1', tools))
+  const report = controller.takeReport('session-1')
+  assert.equal(report.applied, false)
+  assert.equal(report.reason, 'restrict-failed')
+  assert.deepEqual(report.visible, ['read', 'grep', 'stow_scan'])
+})
+
+test('forget 清掉对应报告；dispose 清空全部报告', () => {
+  const { controller, tools } = createHarness()
+  controller.plan('session-1', ['read'])
+  controller.onCreated(createAgent('session-1', tools))
+  assert.equal(controller.forget('session-1'), false, 'pending 已被 onCreated 消费，forget 返回 false')
+  assert.equal(controller.takeReport('session-1'), null, 'forget 必须同时删除报告')
+  controller.plan('session-2', ['read'])
+  controller.onCreated(createAgent('session-2', tools))
+  assert.notEqual(controller.takeReport('session-2'), null)
+  controller.plan('session-3', ['read'])
+  controller.onCreated(createAgent('session-3', tools))
+  controller.dispose()
+  assert.equal(controller.takeReport('session-3'), null, 'dispose 必须清空报告')
+})
+
+test('报告表有上限：超过 64 条按插入顺序淘汰最旧', () => {
+  const { controller, tools } = createHarness()
+  for (let index = 0; index < 65; index += 1) {
+    controller.plan('session-' + index, ['read'])
+    controller.onCreated(createAgent('session-' + index, tools))
+  }
+  assert.equal(controller.takeReport('session-0'), null, '最旧报告被淘汰')
+  assert.notEqual(controller.takeReport('session-64'), null, '最新报告保留')
+})
+
 /* ------------------------------------------------- host 适配器接线 */
 
 /** Fake cordis plugin ctx with the pieces createHostAdapter resolves. */
@@ -302,6 +385,22 @@ test('host 适配器：ctx.on 钩子应用 allowlist、disposed 释放、effect 
   assert.equal(adapter.prepareWorkerToolFace('session-h4', ['read']), false)
 })
 
+test('host 适配器：takeWorkerToolFaceReport 返回 restrict 后实际可见工具，取一次后为 null', () => {
+  const tools = createFakeTools({ leaked: ['stow_scan'] })
+  const cordis = createFakeCordis({ tools })
+  const adapter = createHostAdapter(cordis.ctx, { env: {}, argv: [], execPath: '' })
+  assert.equal(adapter.takeWorkerToolFaceReport('session-none'), null, '未知 session 没有报告')
+  assert.equal(adapter.takeWorkerToolFaceReport(''), null)
+  assert.equal(adapter.prepareWorkerToolFace('session-h1', ['read']), true)
+  cordis.emit('agent/created', { agent: { session: { id: 'session-h1' }, ctx: { tools } } })
+  const report = adapter.takeWorkerToolFaceReport('session-h1')
+  assert.equal(report.sessionId, 'session-h1')
+  assert.equal(report.applied, true)
+  assert.deepEqual(report.allowed, ['read'])
+  assert.deepEqual(report.visible, ['read', 'stow_scan'])
+  assert.equal(adapter.takeWorkerToolFaceReport('session-h1'), null, '报告只能取一次')
+})
+
 test('host 适配器：缺 ctx.on / restrictableNames 时 toolFaceSupport=false，prepare 降级且同一原因只 warning 一次', () => {
   const tools = createFakeTools()
   const warnings = []
@@ -347,6 +446,10 @@ test('withAttribution 透传 S3 工具面方法（真实插件接线 deps.host �
     forgetWorkerToolFace: (sessionId) => {
       calls.push(['forget', sessionId])
     },
+    takeWorkerToolFaceReport: (sessionId) => {
+      calls.push(['report', sessionId])
+      return { sessionId, applied: true, allowed: ['read'], skipped: [], leaked: [], visible: ['read'] }
+    },
     createDispatchSession: async (options) => {
       calls.push(['create', options])
       return 'session-x'
@@ -356,7 +459,15 @@ test('withAttribution 透传 S3 工具面方法（真实插件接线 deps.host �
   assert.deepEqual(wrapped.toolFaceSupport(), { available: true })
   assert.equal(wrapped.prepareWorkerToolFace('session-x', ['read']), true)
   wrapped.forgetWorkerToolFace('session-x')
-  assert.deepEqual(calls, ['support', ['prepare', 'session-x', ['read']], ['forget', 'session-x']])
+  assert.deepEqual(wrapped.takeWorkerToolFaceReport('session-x'), {
+    sessionId: 'session-x',
+    applied: true,
+    allowed: ['read'],
+    skipped: [],
+    leaked: [],
+    visible: ['read'],
+  })
+  assert.deepEqual(calls, ['support', ['prepare', 'session-x', ['read']], ['forget', 'session-x'], ['report', 'session-x']])
 })
 
 test('host 适配器：ctx.on 注册抛错时 toolFaceSupport=false（不假装 applied）', () => {

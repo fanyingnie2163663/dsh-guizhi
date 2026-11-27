@@ -365,15 +365,53 @@ test('client.js（S3 受限 worker）：结果卡展示 worker 会话 / toolFace
   const block = source.slice(start, end)
   assert.ok(block.includes('worker 会话'), '结果卡必须展示 worker 会话 sessionId')
   assert.ok(block.includes('toolFaceApplied'), '结果卡必须展示 toolFaceApplied')
-  assert.ok(block.includes('工具面限制已生效'), 'toolFaceApplied 必须有可读文案')
+  assert.ok(block.includes('只说明 restrict 被调用'), 'toolFaceApplied 只代表 restrict 被调用')
+  assert.ok(block.includes('report.visible'), '必须指出 report.visible 才是实际证据')
+  assert.equal(block.includes('工具面限制已生效'), false, '不得把 toolFaceApplied 写成「已生效」')
   assert.ok(block.includes('payload.toolFace'), '结果卡必须读取 toolFace.requested 等字段')
   assert.ok(block.includes('renderWarningDetails(payload.warnings'), '结果卡必须展示 warnings')
   assert.ok(block.includes('实验性、尽力而为'), '必须标注实验性、尽力而为')
   assert.ok(block.includes('run_code'), '必须说明 run_code 可能仍可见')
   assert.ok(block.includes('可能仍可见'), '必须说明清单外工具可能仍可见')
-  assert.ok(block.includes('真机未验证'), '必须标注真机未验证')
   assert.ok(block.includes('stow_dispatch'), '必须说明与会话内 stow_dispatch 同一实现')
   assert.equal(block.includes('已隔离工具'), false, '不得宣称已隔离工具')
+})
+
+test('client.js（S3）：toolFace.report.visible 结果卡渲染实际可见工具（前 12 个 + 计数 + 实测证据语义）', async () => {
+  const source = await readClientSource()
+  const start = source.indexOf("result.kind === 'dispatchPack'")
+  const end = source.indexOf('return null', start)
+  assert.ok(start >= 0 && end > start, '必须能定位 dispatchPack 结果卡')
+  const block = source.slice(start, end)
+  assert.ok(block.includes('toolFace.report'), '结果卡必须读取 toolFace.report')
+  assert.ok(block.includes('toolFaceReport.visible'), '结果卡必须读取 report.visible')
+  assert.ok(block.includes('实际可见工具（restrict 后）'), '必须展示「实际可见工具（restrict 后）」')
+  assert.ok(block.includes('slice(0, 12)'), 'visible 列表最多展示前 12 个')
+  assert.ok(block.includes('省略'), '超出前 12 个必须有省略提示')
+  for (const field of ['allowed', 'skipped', 'leaked']) {
+    assert.ok(block.includes('toolFaceReport.' + field), '必须展示 report.' + field + ' 计数')
+  }
+  assert.ok(block.includes('实测'), '必须说明 report.visible 是实测证据')
+  assert.ok(block.includes('不是「严格 N 个工具」的承诺'), '必须说明不是严格 N 的承诺')
+  assert.ok(block.includes('run_code'), '必须说明 run_code 可能仍可见')
+  assert.ok(block.includes('宿主豁免工具'), '必须说明宿主豁免工具可能仍可见')
+  assert.equal(block.includes('严格只带'), false, '不得出现「严格只带」')
+  assert.equal(block.includes('已隔离工具'), false, '不得出现「已隔离工具」')
+})
+
+test('client.js（S3）：toolFace.report 为 null 时不伪造可见工具列表，按 warnings 说明', async () => {
+  const source = await readClientSource()
+  const start = source.indexOf("result.kind === 'dispatchPack'")
+  const end = source.indexOf('return null', start)
+  const block = source.slice(start, end)
+  assert.ok(block.includes('toolFace.report !== null'), '必须显式判断 report 是否存在')
+  const ifPos = block.indexOf('if (toolFaceReport !== null)')
+  const titlePos = block.indexOf('实际可见工具（restrict 后）')
+  const nullTextPos = block.indexOf('未取到宿主实测报告')
+  assert.ok(ifPos >= 0 && titlePos > ifPos, '可见工具列表必须在 report 存在的分支里渲染')
+  assert.ok(nullTextPos > titlePos, 'report 为 null 的分支必须说明未取到，且不在 visible 列表里')
+  assert.ok(block.includes('不伪造'), 'report 为空时不得伪造列表')
+  assert.ok(block.includes('warnings'), 'report 为空时应引导看 warnings')
 })
 
 test('client.js（S3 技能探针）：安装提示写明当前会话未刷新、新会话/重启后才可能可见、未完全验证', async () => {
@@ -425,6 +463,59 @@ test('S3：10 个 stow_* 工具在 client / README / DEMO 同步（含 stow_disp
   assert.ok(demo.includes('10 个 stow_*'), 'DEMO 必须写明 10 个 stow_* 工具')
   assert.ok(source.includes('10 个 stow_*'), 'client 文案必须同步 10 个 stow_* 工具')
   assert.ok(source.includes('stow_dispatch'), 'client 必须说明与 stow_dispatch 同一实现')
+})
+
+test('S3：README / DEMO 同步磁盘技能补扫（host 优先、按 name 去重）与 toolFace.report.visible 实测字段', async () => {
+  const readme = await readFile(new URL('README.md', ROOT), 'utf8')
+  const demo = await readFile(new URL('docs/DEMO.md', ROOT), 'utf8')
+  for (const [label, text] of [['README', readme], ['DEMO', demo]]) {
+    assert.ok(text.includes('toolFace.report'), label + ' 必须写 toolFace.report')
+    assert.ok(text.includes('report.visible'), label + ' 必须写 report.visible')
+    assert.ok(text.includes('实测'), label + ' 必须说明这是实测字段')
+    assert.ok(text.includes('不伪造'), label + ' 必须说明 report=null 不伪造')
+  }
+  assert.ok(readme.includes('磁盘'), 'README 必须说明技能清单磁盘补扫')
+  assert.ok(readme.includes('host 优先'), 'README 必须说明 host 行优先合并')
+  assert.ok(readme.includes('按 name 去重'), 'README 必须说明按 name 去重')
+  assert.ok(demo.includes('磁盘'), 'DEMO 必须说明技能清单磁盘补扫')
+  assert.ok(demo.includes('host 优先'), 'DEMO 必须说明 host 优先')
+})
+
+test('README / DEMO：测试计数一致（badge / 开发命令 / 状态），不残留旧计数 465', async () => {
+  const readme = await readFile(new URL('README.md', ROOT), 'utf8')
+  const demo = await readFile(new URL('docs/DEMO.md', ROOT), 'utf8')
+  const digitsOnly = (text) => text.split('').filter((ch) => ch >= '0' && ch <= '9').join('')
+  const numberBetween = (text, before, after) => {
+    const start = text.indexOf(before)
+    if (start < 0) return ''
+    const from = start + before.length
+    const end = text.indexOf(after, from)
+    return end < 0 ? '' : digitsOnly(text.slice(from, end))
+  }
+  const badge = numberBetween(readme, 'badge/tests-', '%20passing')
+  const dev = numberBetween(readme, 'node --test test/*.test.js', '个测试')
+  const demoFullStart = demo.indexOf('全量：')
+  const demoFull = demoFullStart < 0 ? '' : digitsOnly(demo.slice(demoFullStart + 3, demo.indexOf('通过', demoFullStart)))
+  const statusAt = readme.indexOf('测试通过')
+  const statusSlash = statusAt < 0 ? -1 : readme.lastIndexOf('/', statusAt)
+  let statusFirst = ''
+  let statusSecond = ''
+  if (statusSlash >= 0) {
+    let start = statusSlash - 1
+    while (start >= 0 && readme[start] >= '0' && readme[start] <= '9') start -= 1
+    let end = statusSlash + 1
+    while (end < readme.length && readme[end] >= '0' && readme[end] <= '9') end += 1
+    statusFirst = readme.slice(start + 1, statusSlash)
+    statusSecond = readme.slice(statusSlash + 1, end)
+  }
+  assert.ok(badge !== '', 'README badge 必须写测试计数')
+  assert.ok(dev !== '', 'README 开发命令必须写测试计数')
+  assert.ok(demoFull !== '', 'DEMO 验证命令必须写全量 N/N')
+  assert.ok(statusFirst !== '' && statusFirst === statusSecond, 'README 状态段必须写 N/N 测试通过')
+  assert.equal(dev, badge, '开发命令计数必须与 badge 一致')
+  assert.equal(statusFirst, badge, '状态段计数必须与 badge 一致')
+  assert.equal(demoFull.slice(0, demoFull.length / 2), badge, 'DEMO 计数必须与 README 一致')
+  assert.notEqual(badge, '465', '不得残留旧计数 465')
 })
 
 test('S3：README / DEMO 写明 dispatch kind map/pack + packId、降级矩阵、真机 not-run 与技能探针结论', async () => {

@@ -1728,15 +1728,33 @@
           var workerDispatch = payload.dispatch !== null && typeof payload.dispatch === 'object' ? payload.dispatch : {}
           var toolFace = payload.toolFace !== null && typeof payload.toolFace === 'object' ? payload.toolFace : {}
           var requestedTools = Array.isArray(toolFace.requested) ? toolFace.requested : []
+          var toolFaceReport = toolFace.report !== null && typeof toolFace.report === 'object' ? toolFace.report : null
           var workerStarted = typeof workerDispatch.startedAt === 'string' ? dispatchClock(workerDispatch.startedAt) : ''
           var dispatchedPackId = typeof result.packId === 'string' && result.packId !== '' ? result.packId : ''
-          return resultCard(payload.toolFaceApplied === true ? 'info' : 'warn', '已提交受限 worker 派发', [
+          var dispatchChildren = [
             h('p', { className: 'gz-result-meta' }, 'worker 会话：' + String(workerDispatch.sessionId || '') + (workerStarted === '' ? '' : '；开始于 ' + workerStarted) + (dispatchedPackId === '' ? '' : '；装配清单：' + dispatchedPackId)),
-            h('p', { className: 'gz-result-meta' }, '工具面限制已生效（toolFaceApplied）：' + (payload.toolFaceApplied === true ? 'true' : 'false') + '；请求限制工具 ' + String(requestedTools.length) + ' 个'),
-            h('p', { className: 'gz-hint' }, '实验性、尽力而为：在 agent/created 后对 agent.ctx.tools.restrict({ allow }) 尝试裁剪工具面；run_code 与部分宿主豁免工具可能仍可见，宿主版本不支持或未采用预生成会话 id 时会降级为纯软约束。真机未验证——验收请在新会话 / 受限 worker 的实际工具列表里核对，不要只看响应。'),
-            h('p', { className: 'gz-hint' }, '与第 10 个 stow_* 工具 stow_dispatch 同一实现（POST /api/guizhi/dispatch，kind=pack）。'),
-            renderWarningDetails(payload.warnings, '警告'),
-          ])
+            h('p', { className: 'gz-result-meta' }, '工具面限制调用（toolFaceApplied）：' + (payload.toolFaceApplied === true ? 'true' : 'false') + '；请求限制工具 ' + String(requestedTools.length) + ' 个 —— toolFaceApplied 只说明 restrict 被调用，不代表工具面已按清单收紧；实际可见工具以 report.visible 为准。'),
+          ]
+          if (toolFaceReport !== null) {
+            var visibleTools = Array.isArray(toolFaceReport.visible) ? toolFaceReport.visible : []
+            var visibleShown = visibleTools.slice(0, 12)
+            var visibleRest = visibleTools.length - visibleShown.length
+            var allowedCount = Array.isArray(toolFaceReport.allowed) ? toolFaceReport.allowed.length : 0
+            var skippedCount = Array.isArray(toolFaceReport.skipped) ? toolFaceReport.skipped.length : 0
+            var leakedCount = Array.isArray(toolFaceReport.leaked) ? toolFaceReport.leaked.length : 0
+            dispatchChildren.push(h('p', { className: 'gz-result-meta' }, '实际可见工具（restrict 后）' + String(visibleTools.length) + ' 个' + (visibleShown.length === 0 ? '：' : '：' + visibleShown.join('、') + (visibleRest > 0 ? ' …（其余 ' + String(visibleRest) + ' 个省略）' : ''))))
+            dispatchChildren.push(h('p', { className: 'gz-result-meta' }, 'allowed ' + String(allowedCount) + ' / skipped ' + String(skippedCount) + ' / leaked ' + String(leakedCount)))
+            dispatchChildren.push(h('p', { className: 'gz-hint' }, '以上是宿主在 worker 创建后回传的实测工具名（真机验收证据），不是「严格 N 个工具」的承诺：run_code、归置自身层与宿主豁免工具仍可能出现在其中，请以这份实测列表为准。'))
+            if (typeof toolFaceReport.reason === 'string' && toolFaceReport.reason !== '') {
+              dispatchChildren.push(h('p', { className: 'gz-hint' }, '工具面降级原因：' + toolFaceReport.reason))
+            }
+          } else {
+            dispatchChildren.push(h('p', { className: 'gz-hint' }, '本次 1 秒内未取到宿主实测报告（toolFace.report 为空），不伪造可见工具列表；请按下面的 warnings 与 worker 实际工具列表核对。'))
+          }
+          dispatchChildren.push(h('p', { className: 'gz-hint' }, '实验性、尽力而为：在 agent/created 后对 agent.ctx.tools.restrict({ allow }) 尝试裁剪工具面；run_code 与部分宿主豁免工具可能仍可见，宿主版本不支持或未采用预生成会话 id 时会降级为纯软约束。验收请以宿主实测的 report.visible / worker 实际工具列表为准，不要只看 toolFaceApplied。'))
+          dispatchChildren.push(h('p', { className: 'gz-hint' }, '与第 10 个 stow_* 工具 stow_dispatch 同一实现（POST /api/guizhi/dispatch，kind=pack）。'))
+          dispatchChildren.push(renderWarningDetails(payload.warnings, '警告'))
+          return resultCard(payload.toolFaceApplied === true ? 'info' : 'warn', '已提交受限 worker 派发', dispatchChildren)
         }
         return null
       }
@@ -1808,7 +1826,7 @@
           ),
           h('p', { className: 'gz-hint' }, lastPackId === ''
             ? '「派发受限子代理」需要最近一次装配清单：先点「生成装配清单」，再按该清单派发（与 stow_dispatch 同一实现，共 10 个 stow_* 工具）。'
-            : '「派发受限子代理」按最近一次装配清单 ' + lastPackId + ' 派发：实验性、尽力而为，run_code 与部分宿主豁免工具可能仍可见，真机未验证。'),
+            : '「派发受限子代理」按最近一次装配清单 ' + lastPackId + ' 派发：实验性、尽力而为，run_code 与部分宿主豁免工具可能仍可见；结果卡会展示宿主实测的 report.visible（restrict 后实际可见工具），验收以它为准。'),
         )
       }
 

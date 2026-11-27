@@ -638,9 +638,18 @@ test('e2e：pack 受限 worker 派发走真实 store 落盘（plan→create→pr
     promptText = request.text
   }
   host.readDispatchEvents = async () => ({ status: 'events', events: [] })
+  host.takeWorkerToolFaceReport = (sessionId) => ({
+    sessionId,
+    applied: true,
+    allowed: ['read'],
+    skipped: [],
+    leaked: [],
+    visible: ['read', 'run_code'],
+  })
   const response = await call(ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
   assert.equal(response.status, 200, JSON.stringify(response.json))
   assert.equal(response.json.toolFaceApplied, true)
+  assert.deepEqual(response.json.toolFace.report.visible, ['read', 'run_code'], 'e2e：响应携带宿主实际可见工具')
   assert.equal(prepared.length, 1)
   assert.match(prepared[0].sessionId, /^session-/)
   assert.deepEqual(prepared[0].allowedTools, ['read'])

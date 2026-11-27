@@ -168,8 +168,8 @@ function createFakeHost(options = {}) {
   const dispatchSupport = options.dispatchSupport ?? { available: true }
   const dispatchSessionId = options.dispatchSessionId ?? 'background-session'
   const dispatchState = { sessionsCreated: 0, prompts: 0 }
-  /** S3 tool-face spy: planned allowlists, forgotten ids and create() arguments. */
-  const toolFace = { prepared: [], forgotten: [], createdArgs: [] }
+  /** S3 tool-face spy: planned allowlists, forgotten ids, create() arguments and report reads. */
+  const toolFace = { prepared: [], forgotten: [], createdArgs: [], reportRequests: [] }
   /** A: skills 缓存失效 spy——插件用 node:fs 直写 $DSH_HOME/skills 后必须让宿主缓存失效。 */
   const skillsRefreshCalls = []
   const host = {
@@ -258,6 +258,20 @@ function createFakeHost(options = {}) {
   }
   host.forgetWorkerToolFace = (sessionId) => {
     toolFace.forgotten.push(sessionId)
+  }
+  if (options.omitToolFaceReport !== true) {
+    host.takeWorkerToolFaceReport = (sessionId) => {
+      toolFace.reportRequests.push(sessionId)
+      if (options.toolFaceReportMissing === true) return null
+      return {
+        sessionId,
+        applied: true,
+        allowed: cloneJson(options.toolFaceReportAllowed ?? ['read']),
+        skipped: [],
+        leaked: [],
+        visible: cloneJson(options.toolFaceReportVisible ?? ['read', 'run_code']),
+      }
+    }
   }
   return host
 }
@@ -1857,6 +1871,55 @@ test('POST dispatch：kind="pack" 用预生成 session id 创建受限 worker �
   assert.equal(written.kind, 'pack')
   assert.equal(written.sessionId, planned.sessionId)
   assert.equal(written.state, 'running')
+  // S3 证据：响应携带 restrict 后实际可见工具（toolFace.report），且只请求一次
+  assert.deepEqual(deps.host.toolFace.reportRequests, [planned.sessionId], '按实际 session id 取报告')
+  assert.deepEqual(response.json.toolFace.report, {
+    sessionId: planned.sessionId,
+    applied: true,
+    allowed: ['read'],
+    skipped: [],
+    leaked: [],
+    visible: ['read', 'run_code'],
+  })
+})
+
+test('POST dispatch：toolFace.report.visible 来自宿主实际报告，requested 仍是清单请求值', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({
+    store,
+    hostOptions: {
+      adoptPlannedSessionId: true,
+      toolFaceReportAllowed: ['read'],
+      toolFaceReportVisible: ['read', 'run_code', 'stow_scan'],
+    },
+  })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.deepEqual(response.json.toolFace.requested, ['read'], 'requested 是装配清单请求值')
+  assert.deepEqual(response.json.toolFace.report.visible, ['read', 'run_code', 'stow_scan'], 'report.visible 是实际可见工具')
+  assert.deepEqual(response.json.warnings, [])
+})
+
+test('POST dispatch：宿主取不到实际工具面报告 → report=null + warning，仍不阻断派发', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true, toolFaceReportMissing: true } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.toolFaceApplied, true, 'toolFaceApplied 语义不变：prepared + id 匹配')
+  assert.equal(response.json.toolFace.report, null)
+  assert.match(response.json.warnings.join('\n'), /实际工具面报告|实际可见工具/)
+  assert.equal(deps.host.dispatchCalls.length, 1, '报告缺失不阻断派发')
+})
+
+test('POST dispatch：宿主适配器没有报告方法 → report=null + warning，仍不阻断派发', async () => {
+  const { pack, store } = packDispatchFixture()
+  const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true, omitToolFaceReport: true } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.toolFaceApplied, true)
+  assert.equal(response.json.toolFace.report, null)
+  assert.match(response.json.warnings.join('\n'), /不提供.*报告|实际工具面/)
+  assert.equal(deps.host.dispatchCalls.length, 1)
 })
 
 test('POST dispatch：kind="pack" 缺 packId / 非字符串 → 400 PACK_ID_INVALID，不建会话', async () => {
@@ -1945,6 +2008,7 @@ test('POST dispatch：kind="map" 行为不回归（不调用工具面方法、�
   assert.equal(response.json.toolFace, undefined)
   assert.deepEqual(deps.host.toolFace.prepared, [])
   assert.deepEqual(deps.host.toolFace.forgotten, [])
+  assert.deepEqual(deps.host.toolFace.reportRequests, [])
   assert.equal(deps.host.dispatchCalls.length, 1)
 })
 
@@ -1958,11 +2022,12 @@ test('POST dispatch（B）：空装配清单只做软派单，不调用工具面
   assert.equal(response.status, 200, JSON.stringify(response.json))
   assert.equal(response.json.dispatch.kind, 'pack')
   assert.equal(response.json.toolFaceApplied, false, '空 allowlist 不能声称工具面已应用')
-  assert.deepEqual(response.json.toolFace, { applied: false, prepared: false, requested: [] })
+  assert.deepEqual(response.json.toolFace, { applied: false, prepared: false, requested: [], report: null })
   assert.match(response.json.warnings.join('\n'), /没有工具/)
   assert.match(response.json.warnings.join('\n'), /软派单/)
   assert.deepEqual(deps.host.toolFace.prepared, [], '空 pack 不调用 prepareWorkerToolFace')
   assert.deepEqual(deps.host.toolFace.forgotten, [])
+  assert.deepEqual(deps.host.toolFace.reportRequests, [], '空 pack 没有可报告的工具面，不轮询报告')
   assert.equal(deps.host.dispatchState.sessionsCreated, 1, '仍创建会话做软派单')
   assert.equal(deps.host.dispatchCalls.length, 1)
   assert.equal(store.docs.get('dispatch').kind, 'pack')
@@ -2016,6 +2081,8 @@ test('TOOL_SPECS：stow_dispatch 支持 kind map/pack 与可选 packId，描述�
   assert.match(spec.description, /实验性/)
   assert.match(spec.description, /run_code/)
   assert.match(spec.description, /软约束|warning/)
+  assert.match(spec.description, /toolFace\.report/)
+  assert.match(spec.description, /visible/)
 })
 
 test('registerTools：stow_dispatch 走同一派单路由（pack 软派单可调用）', async () => {
