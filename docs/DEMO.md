@@ -4,8 +4,8 @@
 - 分支：v1；Task 8 BASE：7a7c905；T8.5（R-PACK 闭合 pack 提案链）在 784960b 之后提交
 - 最终修复波：BASE 23c3754，F1-F7（R-6B 回滚数据丢失 / R-8A preview-apply 一致性 / DEMO format-1 / spec 承诺裁决 / 用量窗口下推 / HTTP 适配抽测 / client 文案与便宜 Minor）；内部修复记录不随仓库分发。
 - S1（2026-11-28）：能力包 → 装配清单命名与诚实文案；一键整理到预览即止（不再自动应用）；/pack 空清单告警；pack 从能力点 evidence 派生工具 / 技能。
-- S2（2026-11-28）：应用装配清单默认**只导出** `packs/<id>.json`；技能安装改为 **opt-in**（勾选操作区复选框才写 `$DSH_HOME/skills/stow-<id>/SKILL.md`，frontmatter 默认 `disable-model-invocation: true`；rollback 删除/恢复；快照台账 `skills-created.json` + `skills-backup/`）。新增按 pack 生成派单草稿（`stow_draft` 可选 `packId`：父→子软载荷，工具面未被硬限制）。真机技能探针：写入后当前会话未刷新（32→32），新会话 / 重启是否可见 not-run。
-- S3（2026-11-28）：实验性「受限 worker 派发」——面板「派发受限子代理」按钮（需先生成装配清单）、HTTP `POST /api/guizhi/dispatch` 与第 10 个工具 `stow_dispatch`；pack 派发在 `agent/created` 后尝试 `agent.ctx.tools.restrict({ allow })` 裁剪 worker 工具面。**实验性、尽力而为**：`run_code`、归置自身层与宿主豁免工具可能仍可见，不承诺严格 N，真机未验证。真机技能探针：写入合法临时技能后当前会话 skills 数 32→32 未刷新（详见 §4.2-8）。
+- S2（2026-11-28）：应用装配清单默认**只导出** `packs/<id>.json`；技能安装改为 **opt-in**（勾选操作区复选框才写 `$DSH_HOME/skills/stow-<id>/SKILL.md`，frontmatter 默认 `disable-model-invocation: true`；rollback 删除/恢复；快照台账 `skills-created.json` + `skills-backup/`）。新增按 pack 生成派单草稿（`stow_draft` 可选 `packId`：父→子软载荷，工具面未被硬限制）。真机检测（修复前）：写入后当前会话未刷新（32→32）；已加入 `skills.invalidateCache()` 刷新修复（待重启复验）。
+- S3（2026-11-28）：实验性「受限 worker 派发」——面板「派发受限子代理」按钮（需先生成装配清单）、HTTP `POST /api/guizhi/dispatch` 与第 10 个工具 `stow_dispatch`；pack 派发在 `agent/created` 后尝试 `agent.ctx.tools.restrict({ allow })` 裁剪 worker 工具面。**实验性、尽力而为**：`run_code`、归置自身层与宿主豁免工具可能仍可见，不承诺严格 N，真机未验证。真机检测（修复前）：写入合法临时技能后当前会话 skills 数 32→32 未刷新；已加入 `skills.invalidateCache()` 刷新修复（待重启复验）。
 - 相关代码：[routes.js](../lib/routes.js)、[apply.js](../lib/apply.js)、[skillpack.js](../lib/skillpack.js)、[store.js](../lib/store.js)、[http.js](../lib/http.js)、[client.js](../client.js)、[e2e.test.js](../test/e2e.test.js)
 - 本文件同时是「演示脚本」与「设计文档 §11 验收」的证据记录。真机安装/重启/面板/录屏在本机为 **not-run**（禁止重启宿主、禁止改真实 profile），凡 not-run 一律不写成 pass。
 
@@ -98,7 +98,7 @@
 |---|---|---|---|---|
 | 1 | 在装了不少于 20 个插件的真实 DSH 上：扫描 10 秒内出结果（第二次缓存后更快） | **PARTIAL** | 真实 desktop profile 只读冒烟：30 插件（19 npm / 11 patch）、88 工具、scan 冷 240ms、归因 246ms、整链 987ms，均远小于 10s（§3） | 「缓存后更快」**未实现**：v1 没有扫描结果缓存，第二次 scan 仍 ~234ms；面板靠轮询 GET state 读已落盘 scan.json，不重复扫描。真机宿主内扫描 not-run（手动步骤 §4.2-5）。见 issue 1 |
 | 2 | 地图页每个能力点都能点出证据（插件、次数、时间） | **PARTIAL** | e2e 断言 map 能力点 evidence 对象持久化并可读回（scan 证据含 source / tools / used30d / lastUsedAt），client 地图页点击能力点展开 evidence（中文 label 映射）；演示前按 §1.1-4 准备带这些字段的地图 | 证据字段由地图制作者写入（schema 允许开放 evidence 对象）；「自动把 scan 事实填进 map」未实现。真机面板 not-run（§4.2-2） |
-| 3 | 任一建议能生成包并预览；确认后应用成功，回滚成功 | **PASS**（自动化链路证据；真机 not-run） | e2e 走**真实入口**全链路：/gaps 产生安装提案 → /pack 生成 kind=pack 提案并把生成时的 pack 存入 `packs` 状态（packs/ 目录仍无文件）→ /preview 含该 pack 提案且同输入 hash 稳定、ids 过滤 → /apply 建快照（tag=before-apply）+ 备份既有包/写 `packs-created.json` 台账（entries: {path, existedBefore}）+ 导出 `packs/<id>.json`（内容 = 生成时存储的 pack，R-8A），**默认不写技能（响应 skills=[]）**；opt-in 用例再以 `installSkill:true` 应用，把非空 pack 编译安装为 `$DSH_HOME/skills/stow-<id>/SKILL.md` 并写 `skills-created.json` 台账（被覆盖旧技能备份在快照 `skills-backup/<name>/`）→ /rollback 恢复被覆盖旧包与旧技能/删除本次新建包与技能 + store.restore 恢复状态、重复回滚幂等。e2e 8/8、全量 457/457 通过 | 真机面板/真机链路 not-run（§4.2-2/5/8）；**技能新会话可见性 not-run**（§4.2-8）；install 类提案（插件行安装）与「新会话/重启」提示留 v1.1（issue 3） |
+| 3 | 任一建议能生成包并预览；确认后应用成功，回滚成功 | **PASS**（自动化链路证据；真机 not-run） | e2e 走**真实入口**全链路：/gaps 产生安装提案 → /pack 生成 kind=pack 提案并把生成时的 pack 存入 `packs` 状态（packs/ 目录仍无文件）→ /preview 含该 pack 提案且同输入 hash 稳定、ids 过滤 → /apply 建快照（tag=before-apply）+ 备份既有包/写 `packs-created.json` 台账（entries: {path, existedBefore}）+ 导出 `packs/<id>.json`（内容 = 生成时存储的 pack，R-8A），**默认不写技能（响应 skills=[]）**；opt-in 用例再以 `installSkill:true` 应用，把非空 pack 编译安装为 `$DSH_HOME/skills/stow-<id>/SKILL.md` 并写 `skills-created.json` 台账（被覆盖旧技能备份在快照 `skills-backup/<name>/`）→ /rollback 恢复被覆盖旧包与旧技能/删除本次新建包与技能 + store.restore 恢复状态、重复回滚幂等。e2e 8/8、全量 465/465 通过 | 真机面板/真机链路 not-run（§4.2-2/5/8）；**技能新会话可见性 not-run**（§4.2-8）；install 类提案（插件行安装）与「新会话/重启」提示留 v1.1（issue 3） |
 | 4 | 包能导出成文件、人能读懂；显式勾选安装时，插件行安装成功并提示「需要新会话 / 重启」 | **PARTIAL** | 导出 ✅（apply 后落盘）：e2e 断言 `packs/<id>.json` 存在、内容与 /pack 时存入 `packs` 状态的 pack 全量深比较（id/version/stageIds/tools/skills/requirements/createdAt）、schemas.pack 合法。**S2 技能产物（opt-in，自动化 ✅）**：默认 apply 不安装技能（响应 skills=[]、技能目录无文件）；`installSkill:true` 时才把非空 pack 编译成确定性 `SKILL.md`（工作流阶段 / 能力点、建议工具与技能、执行步骤、验收清单；frontmatter 默认 `disable-model-invocation: true`），写入 `$DSH_HOME/skills/stow-<id>/SKILL.md`；台账 + 备份 + 回滚/重复回滚有测试覆盖（skillpack/apply/e2e） | 插件行安装 **v1 不做**（D7 裁决：kind=install 只 warning）；v1.1 显式勾选插件安装与「需要新会话 / 重启」提示 not-run（§4.2-7）；**技能新会话可见性 not-run**（§4.2-8） |
 | 5 | 每个能力点标出生效方式；「需单开会话」的插件有明确徽章和手动步骤 | **NOT-MET（v1 未实现，列入 v1.1 backlog）** | 无 | D7 map 形状没有「生效方式 / ownSession」字段，client 无徽章；属 v1 未实现范围（设计 §7/§11 要求，计划未排期，见 §2.1）。v1.1：evidence 增 appliesAt/ownSession + 面板徽章与手动步骤文案；**工具面硬限制同样不承诺**（S3 的 pack 派发仅实验性尝试 restrict、尽力而为、不承诺严格 N；严格限制属 v-next） |
 | 6 | 60 秒录屏能讲清：家底 → 工作流 → 缺什么 → 建议工具清单（示例指前 5 个；普通派单只给建议，S3 受限 worker 为实验性 restrict、不承诺严格 N） | **PARTIAL** | 脚本就位（本文 §1），流程与按钮均为 client.js 真实文案（含默认只导出 / 勾选安装技能 / 按 pack 派单草稿）；讲解口径见 §1.3-4 | **录屏 not-run**：需在真机安装后由人录制（§4.2-6） |
@@ -160,7 +160,7 @@
 4. **路由（用户执行，只读）**：GET http://127.0.0.1:<宿主端口>/api/guizhi/state 应返回 {scan,map,proposals,selections,sources,advice,dispatch,dispatchSupported,warnings}；advice 是派生的精简建议视图（不落盘），非 loopback 请求应被围栏拒绝。
 5. **≥20 插件真机扫描（用户执行）**：在宿主内点「重新扫描」或调用 stow_scan，记录：插件数 / 工具数 / 技能数 / 归因数 / 每步耗时；第一次扫描应 ≤10s（本任务只读近似 240ms，但真机含会话日志用量统计会更慢），第二次是否更快（当前实现没有扫描缓存 → 预期相近，记 issue）。
 6. **60 秒录屏与用户测试（用户执行）**：按 §1 录制；找 3 位已有自己 DSH 配置的用户看，记录是否有人问「怎么装的」。
-7. **v1.1 插件行安装与生效方式（未来任务）**：显式勾选安装插件行（写 profile 前预览 + 快照 + 回滚 + 「需要新会话 / 重启」提示）；能力点生效方式与「需单开会话」徽章（§11 #4/#5）。（工作流技能安装 S2 已实现，但改为 opt-in，见 §4.2-8；真机技能探针：当前会话未刷新（32→32），新会话 / 重启是否可见 not-run。）
+7. **v1.1 插件行安装与生效方式（未来任务）**：显式勾选安装插件行（写 profile 前预览 + 快照 + 回滚 + 「需要新会话 / 重启」提示）；能力点生效方式与「需单开会话」徽章（§11 #4/#5）。（工作流技能安装 S2 已实现，但改为 opt-in，见 §4.2-8；真机检测（修复前）：当前会话未刷新（32→32）；已加入 `skills.invalidateCache()` 刷新修复（待重启复验）。）
 8. **「生成装配清单 → 预览 → 应用 → 回滚」真机闭环（用户执行）**：点「生成装配清单」后确认 `<数据根>/packs/` 仍为空、proposals 里出现 kind=pack 提案、`<数据根>/packs.json` 里存入生成时的 pack，空清单（无工具无技能）时结果区应带警告；「预览变更」能看到该提案（effect 应含「应用时可选择安装工作流技能 stow-…（默认不安装）」）。**先不勾选**「应用时安装工作流技能」点「应用」：`packs/<id>.json` 出现、`snapshots/<snapshotId>/packs-created.json` 有台账（`entries: [{path, existedBefore}]`），而 `$DSH_HOME/skills/` 下不应出现 `stow-<id>`，结果卡提示「本次只导出装配清单，未安装技能（勾选「应用时安装工作流技能」可安装）」；「回滚」后包文件恢复、状态恢复，再点一次回滚不报错。**再演示 opt-in 分支**：勾选复选框 → 重新生成 / 预览 / 应用后 `$DSH_HOME/skills/stow-<id>/SKILL.md` 出现（apply 结果卡「已安装工作流技能」列出 `stow-<id>`）、`snapshots/<snapshotId>/skills-created.json` 有技能台账，frontmatter 应带 `disable-model-invocation: true`；若该技能此前已有 SKILL.md，`skills-backup/<name>/SKILL.md` 存旧字节；「回滚」后包与技能文件一起恢复（新建的删除、覆盖的还原）、四份状态恢复。**技能新会话可见性（not-run）**：真机探针已确认写入后当前会话 skills 数 32→32 未刷新；新会话 / 重启后是否可见尚未验证（本文件不宣称已可见）。
 9. **一键整理（用户执行）**：工作流页点「一键整理」（页面会显示圆环进度条、百分比与当前工作项）：自动扫描 → 查缺补漏 → 生成装配清单（全部阶段）→ 预览，**到预览即止：不替用户应用、不写 `packs/` 文件、也不安装技能**。结果区标题为「一键整理完成（已到预览，未写入文件）」，显示每步摘要、预览条数与 hash、已建快照 snapshotId（已填入回滚框）、警告（空清单时 pack 步骤标黄），并提示「应用时默认只导出，勾选安装技能才会写技能目录」。确认后自己点「应用」才会落盘（默认只导出；勾选安装技能才写技能目录，先快照、可回滚；install 类提案仍只作为提案、v1 不安装）。
 10. **后台派单真机（用户执行）**：工作流页空状态点「让 Agent 后台拆解」（需先在「场景」页选择并保存场景）。预期：结果区显示「已提交后台派单」与后台会话 id；状态行显示「后台执行中…（开始于 HH:MM）」；数据根 `<数据根>/dispatch.json` 出现 `state:running` 记录；GET `/api/guizhi/state` 的 `dispatch.state` 为 running；agent 在后台会话里调用 `stow_map_save` 后，地图页 3 秒轮询自动出现阶段（不需要刷新或切会话）；失败/超时/会话丢失显示原因并可重试；「查看后台会话」只在点击时打开，不自动切主界面。若宿主缺少 `sessionController`，按钮禁用并提示、POST 返回 503。连点两次只会准入一次：第二次提示「后台派单正在提交/执行中」；上一单状态读取失败时不会重复派单。
@@ -198,7 +198,7 @@
 <数据根>/packs/<id>.json    导出的装配清单（只有 apply 会写）
 <数据根>/snapshots/<id>/    状态副本 + meta.json + packs-created.json / skills-created.json（apply 台账）+ packs-backup/ / skills-backup/（被覆盖旧包 / 旧技能的字节备份）
 <数据根>/catalog/           目录缓存（index-<sha256 前16>.json）
-$DSH_HOME/skills/stow-<id>/SKILL.md   勾选安装技能时 apply 写入（opt-in；frontmatter 默认 disable-model-invocation: true；rollback 删除或恢复；真机探针：当前会话技能列表未刷新（32→32），新会话 / 重启是否可见 not-run）
+$DSH_HOME/skills/stow-<id>/SKILL.md   勾选安装技能时 apply 写入（opt-in；frontmatter 默认 disable-model-invocation: true；rollback 删除或恢复；真机检测（修复前）：当前会话技能列表未刷新（32→32）；已加入 `skills.invalidateCache()` 刷新修复（待重启复验））
 ~~~
 
 ### 5.3 契约形状（D7 + 修订）
@@ -230,7 +230,7 @@ $DSH_HOME/skills/stow-<id>/SKILL.md   勾选安装技能时 apply 写入（opt-i
 
 ~~~bash
 node --test test/e2e.test.js     # 全链路验收（真实 /pack 提案入口 + R-6B/R-8A + S2 默认只导出 / opt-in 技能安装 / 回滚）：8/8 通过
-node --test test/*.test.js       # 全量：457/457 通过
+node --test test/*.test.js       # 全量：465/465 通过
 node --check lib/apply.js && node --check lib/routes.js && node --check lib/host.js && node --check lib/http.js && node --check lib/index.js && node --check client.js
 ~~~
 11. **（S3 实验性）受限 worker 工具面真机 not-run**：`agent/created` → `agent.ctx.tools.restrict({ allow })` 契约、`restrictableNames` 可见性、宿主是否采用预生成会话 id 均未在真机验证；`run_code` / 归置自身层 / 宿主豁免工具可能仍可见，不承诺严格 N。验收看 worker 实际工具列表（§4.2-11），不看响应字段。
@@ -241,10 +241,10 @@ node --check lib/apply.js && node --check lib/routes.js && node --check lib/host
 
 1. **没有扫描缓存**：§11 #1 的「第二次缓存后更快」不满足；面板靠读 scan.json 呈现，不重复扫描。真机耗时需在宿主内复测。
 2. **§11 #5 与 §2.1 的设计承诺多数未实现**：除工具面硬限制（S3 为实验性 PARTIAL）外统一列入 v1.1 backlog（计划未排期，不是 v1 缺陷；逐条裁决见 §2.1）。
-3. **§11 #4 插件行安装未实现**：v1 按 D7 不安装插件、不写 profile，插件行安装与「新会话 / 重启」提示留 v1.1。工作流技能安装已由 S2 实现，但改为 **opt-in**（默认只导出，勾选才装；§2 #3/#4），且**真机技能探针：当前会话未刷新（32→32），新会话 / 重启是否可见 not-run**。
+3. **§11 #4 插件行安装未实现**：v1 按 D7 不安装插件、不写 profile，插件行安装与「新会话 / 重启」提示留 v1.1。工作流技能安装已由 S2 实现，但改为 **opt-in**（默认只导出，勾选才装；§2 #3/#4），且**真机检测（修复前）：当前会话未刷新（32→32），已加入 `skills.invalidateCache()` 刷新修复（待重启复验）**。
 4. **归因覆盖 38/88**：静态归因受 200 文件 / 1MB / 仅 npm 插件限制；无法归因的工具汇总一条 warning，不虚构来源。
 5. **无宿主冒烟中 skills 服务不可用**：技能数只能用文件系统旁证（10），真机需以 skills 服务为准。
-6. **真机未验证项**：安装、重启、面板三屏、10 工具注册、路由挂载、≥20 插件宿主内扫描、「生成装配清单→预览→应用→回滚」真机闭环（默认只导出 + opt-in 安装两条分支）、**受限 worker 工具面（`toolFaceApplied` 只说明 restrict 被调用）**、**技能新会话可见性（当前会话未刷新，需要新会话 / 重启，未完全验证）**、录屏、用户测试（见 §4；受限 worker 手动步骤 §4.2-11）。
+6. **真机未验证项**：安装、重启、面板三屏、10 工具注册、路由挂载、≥20 插件宿主内扫描、「生成装配清单→预览→应用→回滚」真机闭环（默认只导出 + opt-in 安装两条分支）、**受限 worker 工具面（`toolFaceApplied` 只说明 restrict 被调用）**、**技能新会话可见性（refresh 修复待重启复验）**、录屏、用户测试（见 §4；受限 worker 手动步骤 §4.2-11）。
 7. **（S1/S2/S3 均已更新文案）** 面板「生成装配清单」结果文案：标题为「已生成装配清单提案（等待预览/应用）」，删除空的「路径：」行；S3 起提示「应用时默认只导出 packs/<id>.json；勾选「应用时安装工作流技能」时才写 $DSH_HOME/skills/stow-<id>/SKILL.md（frontmatter 默认 disable-model-invocation: true，不进模型技能目录；可回滚）」。工作流操作区新增默认不勾选的安装复选框；「应用」结果卡空 skills 分两种提示（未勾选 / 勾选但为空）；「生成派单草稿」带最近 pack id，draft 卡提示父→子软约束。pack 结果卡渲染空清单 warnings；一键整理结果卡只展示预览条数 / hash / 快照 id，仍是到预览即止。S3 新增「派发受限子代理」结果卡（worker 会话 / toolFaceApplied / warnings + 实验性限制说明）与技能探针文案；静态同步测试锁住 10 工具、dispatch pack body、探针结论与禁令措辞。
 8. **（S1 已修复）「查缺补漏」不再覆盖 pack 提案**：gaps 改为合并——目录来源的安装提案替换旧的目录提案，/pack 生成的 pack 提案保留；不再需要演示时反复补回提案。
 9. **真实公共目录源格式已核验三个源（2026-11-27）**：dshopen / jsDelivr / awesome 源站均为 `{format:1, plugins:[...]}`，`title` / `description` 为 `{en,zh}` 本地化对象（parseFormat1 已支持，见 test/catalog.test.js 本地化用例）；`dshmarket.com/index.json` 本次超时未确认。解析失败仍 fail-open 返回明确 error，不会假装没有缺口。

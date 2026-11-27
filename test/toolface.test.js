@@ -380,5 +380,64 @@ test('host 适配器：ctx.on 注册抛错时 toolFaceSupport=false（不假装 
   assert.match(warnings.join(' | '), /event bus closed/)
 })
 
+test('host 适配器（A）：refreshSkillsCatalog 调用 skills.invalidateCache，失败只 warn 一次', async () => {
+  const calls = []
+  const cordis = createFakeCordis({
+    skills: {
+      list: async () => [],
+      invalidateCache: () => {
+        calls.push('invalidate')
+      },
+    },
+  })
+  const adapter = createHostAdapter(cordis.ctx, { env: {}, argv: [], execPath: '' })
+  assert.equal(adapter.refreshSkillsCatalog(), true)
+  assert.deepEqual(calls, ['invalidate'])
+  assert.deepEqual(cordis.warnings, [])
+  // 旧宿主 / 缺服务：静默 false，正常的降级不算错误
+  const missing = createHostAdapter(createFakeCordis({}).ctx, { env: {}, argv: [], execPath: '' })
+  assert.equal(missing.refreshSkillsCatalog(), false)
+  const noApi = createHostAdapter(createFakeCordis({ skills: { list: async () => [] } }).ctx, { env: {}, argv: [], execPath: '' })
+  assert.equal(noApi.refreshSkillsCatalog(), false)
+  // invalidateCache 抛错：返回 false，绝不把异常抛给 tool route；同一原因只 warning 一次
+  const failingCordis = createFakeCordis({
+    skills: {
+      invalidateCache: () => {
+        throw new Error('cache closed')
+      },
+    },
+  })
+  const failing = createHostAdapter(failingCordis.ctx, { env: {}, argv: [], execPath: '' })
+  assert.equal(failing.refreshSkillsCatalog(), false)
+  assert.equal(failing.refreshSkillsCatalog(), false)
+  const matching = failingCordis.warnings.filter((message) => message.includes('刷新技能缓存失败'))
+  assert.equal(matching.length, 1, '同一失败原因只 warning 一次：' + failingCordis.warnings.join(' | '))
+  assert.match(matching[0], /cache closed/)
+  // 异步 invalidateCache 的 rejection 不能变成 unhandled rejection（失败仍只 warn 一次）
+  const asyncCordis = createFakeCordis({
+    skills: {
+      invalidateCache: () => Promise.reject(new Error('async closed')),
+    },
+  })
+  const asyncAdapter = createHostAdapter(asyncCordis.ctx, { env: {}, argv: [], execPath: '' })
+  assert.equal(asyncAdapter.refreshSkillsCatalog(), true, '异步失效立即返回，不阻塞 tool route')
+  await new Promise((resolve) => setImmediate(resolve))
+  const asyncWarnings = asyncCordis.warnings.filter((message) => message.includes('刷新技能缓存失败'))
+  assert.equal(asyncWarnings.length, 1)
+  assert.match(asyncWarnings[0], /async closed/)
+})
+
+test('withAttribution 透传 refreshSkillsCatalog（A：真实 deps.host 接线必备）', () => {
+  const host = {
+    profilePath: () => '/nonexistent-guizhi-profile',
+    get warnings() {
+      return []
+    },
+    refreshSkillsCatalog: () => true,
+  }
+  const wrapped = withAttribution(host, { profilePath: '/nonexistent-guizhi-profile' })
+  assert.equal(wrapped.refreshSkillsCatalog(), true)
+})
+
 
 

@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROUTE_PATHS, TOOL_SPECS, createRoutes, registerTools } from '../lib/routes.js'
+import { withAttribution } from '../lib/attribution.js'
+import { createHostAdapter } from '../lib/host.js'
 import { buildPack } from '../lib/packs.js'
 import { schemas } from '../lib/schemas.js'
 import { buildPackSkill } from '../lib/skillpack.js'
@@ -168,11 +170,14 @@ function createFakeHost(options = {}) {
   const dispatchState = { sessionsCreated: 0, prompts: 0 }
   /** S3 tool-face spy: planned allowlists, forgotten ids and create() arguments. */
   const toolFace = { prepared: [], forgotten: [], createdArgs: [] }
+  /** A: skills 缓存失效 spy——插件用 node:fs 直写 $DSH_HOME/skills 后必须让宿主缓存失效。 */
+  const skillsRefreshCalls = []
   const host = {
     counts,
     dispatchCalls,
     dispatchState,
     toolFace,
+    skillsRefreshCalls,
     sessionEventSince,
     get warnings() {
       return warnings.slice()
@@ -238,6 +243,13 @@ function createFakeHost(options = {}) {
         }
       })()
     },
+  }
+  if (options.omitSkillsRefresh !== true) {
+    host.refreshSkillsCatalog = () => {
+      skillsRefreshCalls.push(true)
+      if (typeof options.refreshSkillsError === 'string') throw new Error(options.refreshSkillsError)
+      return options.refreshSkillsRejected !== true
+    }
   }
   if (options.omitToolFace === true) return host
   host.prepareWorkerToolFace = (sessionId, allowedTools) => {
@@ -1563,7 +1575,7 @@ test('POST apply/rollback（S2）：skillsHome 透传——响应含 skills，ro
   assert.equal(await readFile(target, 'utf8'), expected.markdown)
   const rollbackResponse = await call(deps, ROUTE_PATHS.rollback, { snapshotId: applied.json.snapshotId })
   assert.equal(rollbackResponse.status, 200, JSON.stringify(rollbackResponse.json))
-  assert.deepEqual(rollbackResponse.json, { restored: true })
+  assert.deepEqual(rollbackResponse.json, { restored: true, skillsRefreshed: true })
   await assert.rejects(stat(target), { code: 'ENOENT' })
   await assert.rejects(stat(join(skillsHome, expected.name)), { code: 'ENOENT' })
 })
@@ -1652,6 +1664,83 @@ test('POST apply：installSkill=true 但 skillsHome 不可用时 200 + warning�
   assert.deepEqual(response.json.skills, [])
   assert.match(response.json.warnings.join('\n'), /技能安装已跳过/)
   assert.equal((await stat(join(home, 'packs', state.pack.id + '.json'))).isFile(), true)
+})
+
+/* ------------------------------------------------- A：skills 缓存失效接线 */
+
+test('POST apply（A）：installSkill=true 安装技能后刷新 skills 缓存；默认 false 不刷新', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-refresh-'))
+  cleanup.push(home)
+  const skillsHome = join(home, 'skills')
+  const state = samplePackState()
+  const store = createFakeStore({ proposals: state.proposals, packs: state.packs })
+  const host = createFakeHost()
+  const deps = makeDeps({ store, home, skillsHome, host })
+  const defaultApply = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id] })
+  assert.equal(defaultApply.status, 200, JSON.stringify(defaultApply.json))
+  assert.equal(host.skillsRefreshCalls.length, 0, '默认只导出清单，没有写技能就不该刷新缓存')
+  assert.equal(Object.hasOwn(defaultApply.json, 'skillsRefreshed'), false, '未装技能时响应不带 skillsRefreshed')
+  const optIn = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill: true })
+  assert.equal(optIn.status, 200, JSON.stringify(optIn.json))
+  assert.equal(optIn.json.skills.length, 1)
+  assert.equal(host.skillsRefreshCalls.length, 1, '写入 SKILL.md 后必须让宿主 skills 缓存失效一次')
+  assert.equal(optIn.json.skillsRefreshed, true)
+})
+
+test('POST rollback（A）：回滚后刷新 skills 缓存（技能可能被删除），响应带 skillsRefreshed', async () => {
+  const { deps, applied } = await seedAppliedSkill()
+  assert.equal(deps.host.skillsRefreshCalls.length, 1, 'apply 安装技能已刷新一次')
+  const rollbackResponse = await call(deps, ROUTE_PATHS.rollback, { snapshotId: applied.json.snapshotId })
+  assert.equal(rollbackResponse.status, 200, JSON.stringify(rollbackResponse.json))
+  assert.equal(deps.host.skillsRefreshCalls.length, 2, 'rollback 删除技能后必须再刷新一次')
+  assert.equal(rollbackResponse.json.restored, true)
+  assert.equal(rollbackResponse.json.skillsRefreshed, true)
+})
+
+test('POST apply（A）：skills 缓存刷新抛错不阻断 apply，返回 false + 可读 warning', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-refresh-fail-'))
+  cleanup.push(home)
+  const skillsHome = join(home, 'skills')
+  const state = samplePackState()
+  const store = createFakeStore({ proposals: state.proposals, packs: state.packs })
+  const host = createFakeHost({ refreshSkillsError: 'skills service closed' })
+  const deps = makeDeps({ store, home, skillsHome, host })
+  const response = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill: true })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.skills.length, 1, '技能已写到磁盘，不能因缓存刷新失败回滚')
+  assert.equal(response.json.skillsRefreshed, false)
+  assert.match(response.json.warnings.join('\n'), /技能缓存刷新失败/)
+  assert.match(response.json.warnings.join('\n'), /skills service closed/)
+})
+
+test('POST apply（A 接线）：真实 host 适配器 + withAttribution 把 skills.invalidateCache 接到 apply 路由', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'guizhi-routes-refresh-wire-'))
+  cleanup.push(home)
+  const skillsHome = join(home, 'skills')
+  const state = samplePackState()
+  const store = createFakeStore({ proposals: state.proposals, packs: state.packs })
+  const invalidations = []
+  const ctx = {
+    get(name) {
+      if (name === 'skills') {
+        return {
+          list: async () => [],
+          invalidateCache: () => {
+            invalidations.push(true)
+          },
+        }
+      }
+      return undefined
+    },
+  }
+  const adapter = createHostAdapter(ctx, { env: {}, argv: [], execPath: '' })
+  const host = withAttribution(adapter, { profilePath: '/nonexistent-guizhi-profile' })
+  const deps = makeDeps({ store, home, skillsHome, host })
+  const response = await call(deps, ROUTE_PATHS.apply, { ids: [state.proposal.id], installSkill: true })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.skills.length, 1)
+  assert.deepEqual(invalidations, [true], '真实接线必须让宿主 skills 缓存失效')
+  assert.equal(response.json.skillsRefreshed, true)
 })
 
 /* ------------------------------------------------- pack 感知派单草稿 */
@@ -1857,6 +1946,53 @@ test('POST dispatch：kind="map" 行为不回归（不调用工具面方法、�
   assert.deepEqual(deps.host.toolFace.prepared, [])
   assert.deepEqual(deps.host.toolFace.forgotten, [])
   assert.equal(deps.host.dispatchCalls.length, 1)
+})
+
+test('POST dispatch（B）：空装配清单只做软派单，不调用工具面准备、不再声称 applied', async () => {
+  const map = { scenarios: ['dev'], stages: [{ id: 'idle', title: '空闲', capabilities: [] }] }
+  const pack = buildPack({ map, stageIds: ['idle'], title: '空包' })
+  assert.deepEqual(pack.tools, [])
+  const store = createFakeStore({ packs: { packs: [pack] } })
+  const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true } })
+  const response = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(response.status, 200, JSON.stringify(response.json))
+  assert.equal(response.json.dispatch.kind, 'pack')
+  assert.equal(response.json.toolFaceApplied, false, '空 allowlist 不能声称工具面已应用')
+  assert.deepEqual(response.json.toolFace, { applied: false, prepared: false, requested: [] })
+  assert.match(response.json.warnings.join('\n'), /没有工具/)
+  assert.match(response.json.warnings.join('\n'), /软派单/)
+  assert.deepEqual(deps.host.toolFace.prepared, [], '空 pack 不调用 prepareWorkerToolFace')
+  assert.deepEqual(deps.host.toolFace.forgotten, [])
+  assert.equal(deps.host.dispatchState.sessionsCreated, 1, '仍创建会话做软派单')
+  assert.equal(deps.host.dispatchCalls.length, 1)
+  assert.equal(store.docs.get('dispatch').kind, 'pack')
+})
+
+test('POST dispatch（C）：上一单 pack 已完成时，map 派单不复用受限 worker 会话', async () => {
+  const { pack, store } = packDispatchFixture()
+  const dispatchEvents = []
+  const deps = makeDeps({ store, hostOptions: { adoptPlannedSessionId: true, dispatchEvents } })
+  const packResponse = await call(deps, ROUTE_PATHS.dispatch, { kind: 'pack', packId: pack.id })
+  assert.equal(packResponse.status, 200, JSON.stringify(packResponse.json))
+  const packRecord = store.docs.get('dispatch')
+  assert.equal(packRecord.kind, 'pack')
+  // 让 pack 那一单在会话日志里完成：下一次 map 派单不能撞上单飞 409。
+  const packedAt = Date.parse(packRecord.startedAt)
+  dispatchEvents.push(
+    { type: 'user/message', seq: 1, time: packedAt, data: { source: { rpcId: packRecord.requestId } } },
+    { type: 'turn/end', seq: 2, time: packedAt },
+  )
+  store.docs.set('selections', { selected: ['dev'], custom: '' })
+  store.docs.set('scan', sampleScan())
+  const mapResponse = await call(deps, ROUTE_PATHS.dispatch, { kind: 'map' })
+  assert.equal(mapResponse.status, 200, JSON.stringify(mapResponse.json))
+  assert.equal(mapResponse.json.dispatch.kind, 'map')
+  assert.equal(deps.host.dispatchState.sessionsCreated, 2, '跨 kind 必须新建 map 会话')
+  assert.notEqual(deps.host.dispatchCalls[1].sessionId, packRecord.sessionId, '不得把地图拆解任务投进受限 worker 会话')
+  const mapRecord = store.docs.get('dispatch')
+  assert.equal(mapRecord.kind, 'map')
+  assert.notEqual(mapRecord.sessionId, packRecord.sessionId)
+  assert.notEqual(mapRecord.requestId, packRecord.requestId)
 })
 
 test('POST dispatch：kind 未知值 → 400 且提示 map/pack', async () => {

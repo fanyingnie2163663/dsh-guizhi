@@ -7,7 +7,7 @@
 <p align="center"><b>看清你装了什么，按你的工作流归置成能用的装配清单。</b></p>
 
 <p align="center">
-  <a href="https://github.com/fanyingnie2163663/dsh-guizhi/actions"><img src="https://img.shields.io/badge/tests-457%20passing-2ea44f" alt="tests"></a>
+  <a href="https://github.com/fanyingnie2163663/dsh-guizhi/actions"><img src="https://img.shields.io/badge/tests-465%20passing-2ea44f" alt="tests"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A524.9-339933" alt="node">
   <img src="https://img.shields.io/badge/DSH-%E2%89%A50.2.2-4d6bfe" alt="dsh">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
@@ -32,7 +32,7 @@
 
 ## 参与与支持
 
-- **欢迎 PR**：bug 修复、文档修正、新的场景与公共目录源，以及 [状态与已知限制](#状态与已知限制) 里 v1.1 backlog 的任何一项都欢迎。较大的改动建议先开 issue 对一下方向；提交前跑一遍 `node --test test/*.test.js`（457 个测试），保持全绿。
+- **欢迎 PR**：bug 修复、文档修正、新的场景与公共目录源，以及 [状态与已知限制](#状态与已知限制) 里 v1.1 backlog 的任何一项都欢迎。较大的改动建议先开 issue 对一下方向；提交前跑一遍 `node --test test/*.test.js`（465 个测试），保持全绿。
 - **点个 Star**：如果归置帮你理清了插件、工具和技能，欢迎给 [fanyingnie2163663/dsh-guizhi](https://github.com/fanyingnie2163663/dsh-guizhi) 点个 ⭐。对这类小工具来说，star 是「继续维护」最直接的信号，也能让更多需要它的人发现它。
 - **反馈问题**：用 [GitHub Issues](https://github.com/fanyingnie2163663/dsh-guizhi/issues) 提，附上 DSH 版本、`node -v`、复现步骤和截图更好；真机验收清单见 [`docs/DEMO.md`](docs/DEMO.md) §4。
 
@@ -136,7 +136,7 @@ dsh plugin --profile <profile> add @fanyingnie/dsh-guizhi
 4. **工作流**页先在「目录源」填一个 format-1 目录地址并保存（推荐源见下节），再点「查缺补漏」：从该目录匹配缺口（不可达会明确报错）。
 5. 点「生成装配清单」：只生成 `kind=pack` **提案**（装配清单），不落盘；如果清单里没有任何工具 / 技能，结果区会**告警**（空清单不伪装成可应用内容）。
 6. 点「预览变更」：看 diff 与稳定 hash，确认要应用的条目。
-7. 点「应用」：默认**只导出**装配清单 `packs/<id>.json`（先写快照、备份会被覆盖的旧包、记台账）。只有先勾选操作区的「应用时安装工作流技能（写入 $DSH_HOME/skills，默认不装，可回滚）」，才会额外把非空清单安装为 `$DSH_HOME/skills/stow-<id>/SKILL.md`（可回滚；真机探针：当前会话技能列表未刷新，需要新会话 / 重启后才可能可见，未完全验证）。
+7. 点「应用」：默认**只导出**装配清单 `packs/<id>.json`（先写快照、备份会被覆盖的旧包、记台账）。只有先勾选操作区的「应用时安装工作流技能（写入 $DSH_HOME/skills，默认不装，可回滚）」，才会额外把非空清单安装为 `$DSH_HOME/skills/stow-<id>/SKILL.md`（可回滚；真机探针（修复前）：当前会话技能列表未刷新；已加入 skills.invalidateCache() 刷新修复，待重启复验）。
 8. 点「回滚」：删除本次新建的包；若勾选安装过技能，一并删除本次新建的技能文件 / 恢复被覆盖的旧 `SKILL.md`；恢复状态，重复回滚幂等。
 9. 点「生成派单草稿」：生成装配清单成功后，面板会记住最近一次 pack id，草稿改为按该清单生成父→子结构化软载荷（无 pack id 时仍是旧的扫描草稿）；草稿只是文本，面板不会代发。
 10. 点「派发受限子代理」：按最近一次装配清单派发受限 worker（与 `stow_dispatch` 同一实现）；结果卡展示 worker 会话 id、`toolFaceApplied`、请求限制工具数与 warnings。**实验性、尽力而为**：不保证隐藏 `run_code` 与部分宿主豁免工具，宿主不支持时降级为纯软约束；真机未验证，验收要看 worker 的实际工具列表，而不是只看响应。
@@ -243,20 +243,20 @@ $DSH_HOME/guizhi/
 ├── packs/<id>.json    # apply 后导出的装配清单
 └── snapshots/<id>/    # 快照 + packs-created.json / skills-created.json 台账 + packs-backup/ / skills-backup/
 
-$DSH_HOME/skills/stow-<id>/SKILL.md   # 勾选安装技能时 apply 写入（opt-in；rollback 删除或恢复；真机探针：当前会话技能列表未刷新（32→32），需要新会话 / 重启后才可能可见，未完全验证）
+$DSH_HOME/skills/stow-<id>/SKILL.md   # 勾选安装技能时 apply 写入（opt-in；rollback 删除或恢复；真机探针（修复前）：当前会话技能列表未刷新（32→32）；已加入 skills.invalidateCache() 刷新修复，待重启复验）
 ```
 
 - **只读扫描**：不读凭据、不读与插件/技能无关的会话内容；用量只取工具调用名与时间，不上行、不落盘明细。
 - **不调模型**：插件自身不调用任何模型 API。
 - **写操作可回滚**：任何落盘先写快照、备份会被覆盖的文件（包文件台账 `packs-created.json` / 技能台账 `skills-created.json`）、记台账；回滚幂等。
 - **外部目录只当数据**：format-1 索引做 schema 校验、缓存、fail-open；内容不执行、不自动安装。
-- **应用 = 默认导出装配清单；技能安装是 opt-in**：默认只写 `packs/<id>.json`；显式 `installSkill: true` 时才写 `$DSH_HOME/skills/stow-<id>/SKILL.md`（frontmatter 默认 `disable-model-invocation: true`，不占模型技能目录；真机探针：当前会话技能列表未刷新，需要新会话 / 重启后才可能可见，未完全验证）。不安装插件、不改 profile、不改预设、也不限制工具面；`install` 类提案只提示不执行（v1.1）。写盘同样先快照、可回滚。
+- **应用 = 默认导出装配清单；技能安装是 opt-in**：默认只写 `packs/<id>.json`；显式 `installSkill: true` 时才写 `$DSH_HOME/skills/stow-<id>/SKILL.md`（frontmatter 默认 `disable-model-invocation: true`，不占模型技能目录；真机探针（修复前）：当前会话技能列表未刷新；已加入 skills.invalidateCache() 刷新修复，待重启复验）。不安装插件、不改 profile、不改预设、也不限制工具面；`install` 类提案只提示不执行（v1.1）。写盘同样先快照、可回滚。
 
 ## 开发
 
 ```bash
 pnpm install                    # 仅 yaml 运行时依赖
-node --test test/*.test.js      # 457 个测试
+node --test test/*.test.js      # 465 个测试
 node --check client.js lib/*.js # 语法检查（无构建步骤）
 ```
 
@@ -270,13 +270,13 @@ test/          node:test：单元 + 路由 + HTTP 适配 + e2e
 
 ## 状态与已知限制
 
-- **v0.1 功能已实现**：457/457 测试通过（含 S2「技能安装 opt-in」「按 pack 生成派单草稿」与 S3 实验性「受限 worker 派发」；S1–S3 改动已实现（本轮提交）；npm `0.1.0` 为 0.x 早期版本）。
+- **v0.1 功能已实现**：465/465 测试通过（含 S2「技能安装 opt-in」「按 pack 生成派单草稿」与 S3 实验性「受限 worker 派发」；S1–S3 改动已实现（本轮提交）；npm `0.1.0` 为 0.x 早期版本）。
 - **冗余精简建议（v1.1 先行项）**：`capability.suggestion` 可选字段 + `GET /api/guizhi/state.advice` 派生视图；地图没写建议时按证据与扫描用量自动归纳（用量未知不写成 0，0 次不代表无用），只建议、不自动停用/卸载任何东西。
-- **「装配清单」v1 的真实能力**：`packs/<id>.json` 是 JSON 声明（阶段 / 工具 / 技能 / 建议）；**v1 的 pack 仍是声明 + 软派单**，应用默认只导出它。**技能安装是 opt-in（S2）**：勾选后才会把非空清单编译成 `$DSH_HOME/skills/stow-<id>/SKILL.md`（含工作流阶段 / 能力点、建议工具与技能、执行步骤与验收清单；frontmatter 默认 `disable-model-invocation: true`，不占模型技能目录、可手改后让模型自动调用；可回滚）。**不安装插件、不改 profile、不限制工具面**；「一键整理」到预览即止，不会替用户应用。真机探针：写入后当前会话技能列表未刷新（32→32），需要新会话 / 重启后才可能可见，未完全验证（not-run）。S3 的「派发受限子代理」会实验性尝试 restrict（尽力而为、不保证生效、真机未验证）。
+- **「装配清单」v1 的真实能力**：`packs/<id>.json` 是 JSON 声明（阶段 / 工具 / 技能 / 建议）；**v1 的 pack 仍是声明 + 软派单**，应用默认只导出它。**技能安装是 opt-in（S2）**：勾选后才会把非空清单编译成 `$DSH_HOME/skills/stow-<id>/SKILL.md`（含工作流阶段 / 能力点、建议工具与技能、执行步骤与验收清单；frontmatter 默认 `disable-model-invocation: true`，不占模型技能目录、可手改后让模型自动调用；可回滚）。**不安装插件、不改 profile、不限制工具面**；「一键整理」到预览即止，不会替用户应用。真机检测（修复前）：写入后当前会话技能列表未刷新（32→32）；已加入 skills.invalidateCache() 刷新修复（待重启复验）。S3 的「派发受限子代理」会实验性尝试 restrict（尽力而为、不保证生效、真机未验证）。
 - **按 pack 生成派单草稿（S2）**：`stow_draft` 可选 `packId`；有值时从 `packs` 状态生成父→子结构化软载荷（标题、阶段 / 能力点、建议工具 / 技能、执行步骤、验收清单，固定句「只使用上述工具/技能；这是软约束，工具面未被硬限制。」）。它**不删工具 schema、不省工具面 token**；S3 的「派发受限子代理」会实验性尝试 `restrict`，但不保证隐藏 `run_code` / 自身层 / 宿主豁免工具，也不承诺严格 N（真机未验证）。
-- **技能目录可见范围**：生成的技能写到全局 `$DSH_HOME/skills/stow-<id>/`，默认 `disable-model-invocation: true`（不占模型技能目录）；项目级 `.dsh/skills` 是后续方向。真机技能探针（2026-11-28）：在真实 `$DSH_HOME/skills` 写入合法临时技能 `stow-hotload-probe`，等 3s 后调用 `stow_scan`，skills 数 32→32 未变化，删除后仍 32；即**当前会话的 skills 列表没有刷新**，预计需要新会话 / 重启才可能可见（未完全验证；新会话/重启是否可见 not-run），因此不宣称写入后立刻生效。
+- **真机检测（2026-11-28，DSH 0.2.2-rc.5）**：插件与 10 个 `stow_*` 工具加载；S1 pack 从 evidence 派生 42 工具 / 27 技能 / 27 行；pipeline 4 步到预览；S2 默认只导出、opt-in 安装/回滚文件正确；S3 派单完成（空清单降级软约束）。**发现并修复**：①插件 Node fs 写技能后 DSH skills 列表不刷新（apply/rollback 现在调用 `skills.invalidateCache()`，响应含 `skillsRefreshed`）；②空 pack dispatch 误报 `toolFaceApplied:true`；③map dispatch 可能复用 pack worker 会话。修复需重启后复验；真实受限 worker 工具列表、token 收益、GUI 面板仍 not-run。
 - **空清单会告警**：地图与能力点 evidence 都派生不出工具 / 技能时，`/pack` 与「一键整理」都会在结果区给出 warnings，不把空清单当成可应用内容。
-- **真机验证仍待执行（not-run）**：安装、重启、面板渲染、路由可达、10 工具真实注册调用、≥20 插件真机扫描、**受限 worker 工具面（`toolFaceApplied` 只表示 restrict 被调用）**、**技能新会话可见性（当前会话未刷新，需要新会话 / 重启，未完全验证）**、录屏、用户测试 —— 步骤见 [`docs/DEMO.md`](docs/DEMO.md) §4；本 README 不宣称真机通过。
+- **真机验证仍待执行（not-run）**：面板渲染、路由可达、10 工具真实注册调用、**受限 worker 实际工具面（`toolFaceApplied` 只表示 restrict 被调用，不等于严格 N）**、**技能安装后重启/新会话可见性（refresh 修复待重启复验）**、录屏、用户测试 —— 步骤见 [`docs/DEMO.md`](docs/DEMO.md) §4；本 README 不宣称真机通过。
 - **v1.1 / next 计划（均未实现，不是 v1 现状）**：插件行安装与「需要新会话/重启」提示、能力点「生效方式/需单开会话」徽章、工具面硬限制（S3 仅实验性、尽力而为，不承诺严格 N；严格限制仍属 v-next）、项目级 `.dsh/skills`、清爽页重复/冲突与上下文成本、应用抽屉逐条启用/忽略、冗余**提案**（当前只在地图能力点展开处显示「精简建议」，不生成可应用提案）与来源信任等级、无 client 插件时的 HTML 报告兜底、场景→工作流自动拆解。
 
 ## 文档
